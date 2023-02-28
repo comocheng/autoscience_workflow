@@ -4,9 +4,10 @@ import ase.io
 import ase.io.gaussian
 
 
-def calculate_garbage_score(atoms):
+def calculate_garbage_score(atoms, verbose=False):
     garbage_score = 0
-    min_dist = 0.75
+    min_H_dist = 0.75
+    min_heavy_dist = 1.1
     nn_dist = 1.5
     nn_threshold = 4
 
@@ -18,16 +19,26 @@ def calculate_garbage_score(atoms):
 
         for j in range(i + 1, len(atoms)):
             dist = atoms.get_distance(i, j)
-            if dist < min_dist:
+            if atoms[i].symbol == 'H' or atoms[j].symbol == 'H':
+                threshold = min_H_dist
+            else:
+                threshold = min_heavy_dist
+            if dist < threshold:
                 atomic_weight = atoms.get_atomic_numbers()[i] + atoms.get_atomic_numbers()[j]
-                garbage_score += atomic_weight / num_combos
-                # print(f'Atom {i} and atom {j} are too close ({dist:.3f} < {min_dist:.3f})')
+                garbage_score += atomic_weight / num_combos + threshold - dist
+                if verbose:
+                    print(f'Atom {i} and atom {j} are too close ({dist:.3f} < {threshold:.3f})')
+            if dist < nn_dist:
+                n_close += 1
+        for j in range(0, i):
+            dist = atoms.get_distance(i, j)
             if dist < nn_dist:
                 n_close += 1
 
         if n_close > nn_threshold:
             garbage_score += n_close / 10.0
-            # print(f'Atom {i} has {n_close} neighbors')
+            if verbose:
+                print(f'Atom {i} has {n_close} neighbors')
     return garbage_score
 
 
