@@ -343,6 +343,17 @@ def wait_for_conformer_opt(species_index):
     species_log(species_index, f'Conformer optimization complete')
 
 
+def arkane_species_complete(species_index):
+    """Function to check whether the arkane job is complete for a species
+    Expects to find the following directory structure:
+    DFT_DIR/thermo/species_XXXX/arkane/RMG_libraries/thermo.py
+    Returns True if complete, False otherwise
+    """
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    arkane_result = os.path.join(species_dir, 'arkane', 'RMG_libraries', 'thermo.py')
+    return os.path.exists(arkane_result)
+
+
 if __name__ == '__main__':
     # run one
 
