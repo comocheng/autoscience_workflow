@@ -2,6 +2,7 @@
 
 import os
 import glob
+import sys
 import numpy as np
 import pandas as pd
 import time
@@ -17,8 +18,8 @@ import autotst.calculator.gaussian
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    # DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
-    DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
+    DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
+    # DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
 
 MAX_JOBS_RUNNING = 40
 
@@ -94,7 +95,10 @@ def get_species_status(species_index, job_type):
     if not os.path.exists(status_file):
         return False
     with open(status_file, 'r') as f:
-        status = yaml.load(f, Loader=yaml.FullLoader)
+        try:
+            status = yaml.load(f, Loader=yaml.FullLoader)
+        except AttributeError:
+            status = yaml.safe_load(f)
     if job_type in status:
         return status[job_type]
     return False
@@ -110,10 +114,40 @@ def set_species_status(species_index, job_type, job_status):
     status = {}
     if os.path.exists(status_file):
         with open(status_file, 'r') as f:
-            status = yaml.load(f, Loader=yaml.FullLoader)
+            try:
+                status = yaml.load(f, Loader=yaml.FullLoader)
+            except AttributeError:
+                status = yaml.safe_load(f)
     status[job_type] = job_status
     with open(status_file, 'w') as f:
         yaml.dump(status, f)
+
+
+def ordered_array_str(list_of_indices):
+    # convenient script for putting a list of task numbers into a string that can be used for a SLURM array job
+    # assume it's sorted
+    if len(list_of_indices) == 1:
+        return str(list_of_indices[0])
+    elif len(list_of_indices) == 2:
+        return f'{list_of_indices[0]}, {list_of_indices[1]}'
+
+    array_str = str(list_of_indices[0]) + '-'
+    for j in range(1, len(list_of_indices) - 1):
+        if list_of_indices[j] - list_of_indices[j - 1] != 1:
+            if j > 1:
+                array_str += str(list_of_indices[j - 1])
+                array_str += f',{list_of_indices[j]}-'
+            else:
+                array_str = array_str.replace('-', ',')
+                array_str += f'{list_of_indices[j]}-'
+        # cap the end
+        if j + 2 == len(list_of_indices):
+            if list_of_indices[j + 1] - list_of_indices[j] != 1:
+                array_str += f'{list_of_indices[j]},{list_of_indices[j + 1]}'
+            else:
+                array_str += f'{list_of_indices[j + 1]}'
+
+    return array_str
 
 
 def screen_conformers(species_index):
@@ -202,6 +236,14 @@ def optimize_conformers(species_index):
         return True
 
     n_conformers = len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com')))
+    restart = False
+    rerun_indices = []
+    for i in range(0, len(n_conforers)):
+        conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
+        if os.path.exists(conformer_logfile):
+            termination_status = termination_status(conformer_logfile)
+            if termination_status == 1 or termination_status == -1:
+                rerun_indices.append(i)
 
     # Make slurm script to run all the conformer calculations
     slurm_run_file = os.path.join(conformer_dir, 'run.sh')
@@ -216,6 +258,13 @@ def optimize_conformers(species_index):
         '--cpus-per-task': 16,
         '--array': f'0-{n_conformers - 1}%30',
     }
+    if rerun_indices:
+        slurm_run_file = os.path.join(conformer_dir, 'rerun.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
 
     slurm_file_writer = job_manager.SlurmJobFile(
         full_path=slurm_run_file,
@@ -272,7 +321,7 @@ def conformers_done_optimizing(species_index, completion_threshold=0.9):
         else:
             # optimization didn't finish
             incomplete_indices.append(i)
-    if len(finished_runs) / n_conformers > completion_threshold and len(good_runs) > 0:
+    if len(finished_runs) / n_conformers >= completion_threshold and len(good_runs) > 0:
         return True
     return False
 
@@ -295,5 +344,23 @@ def wait_for_conformer_opt(species_index):
 
 
 if __name__ == '__main__':
-    species_index = 87
+    # run one
+
+    if len(sys.argv) > 1:
+        species_index = int(sys.argv[1])
+    else:
+        species_index = 87
     screen_conformers(species_index)
+    optimize_conformers(species_index)
+    exit(0)
+    # run all
+    # wait until # jobs is below 40 to start a new thing:
+    import job_manager
+
+    # for species_index in range(40, 65):
+    for species_index in range(101, 110):
+        jobs_running = job_manager.count_slurm_jobs()
+        while jobs_running > 40:
+            time.sleep(60)
+            jobs_running = job_manager.count_slurm_jobs()
+        screen_conformers(species_index)
