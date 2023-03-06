@@ -3,23 +3,31 @@
 import os
 import glob
 import sys
-import numpy as np
 import pandas as pd
 import time
 import datetime
 import yaml
 import job_manager
 
+import arkane.ess.gaussian  # does a lot better at reading gaussian files than ase
+
+# do I really need any of these?
+import shutil
+
+import cclib.io
 
 import autotst.species
+import autotst.species
 import autotst.calculator.gaussian
+
+import ase.io.gaussian
 
 
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
-    # DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
+    # DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
+    DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
 
 MAX_JOBS_RUNNING = 40
 
@@ -238,7 +246,7 @@ def optimize_conformers(species_index):
     n_conformers = len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com')))
     restart = False
     rerun_indices = []
-    for i in range(0, len(n_conforers)):
+    for i in range(0, len(n_conformers)):
         conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
         if os.path.exists(conformer_logfile):
             termination_status = termination_status(conformer_logfile)
@@ -354,7 +362,188 @@ def arkane_species_complete(species_index):
     return os.path.exists(arkane_result)
 
 
+def get_gaussian_file_energy(gaussian_log_file):
+    """Function to get the energy from a Gaussian .log file"""
+    with open(gaussian_log_file, 'r') as f:
+        # check that it's really a gaussian file
+        line = f.readline()
+        if 'Gaussian' not in line:
+            return None
+        f.seek(0)
+        gl = arkane.ess.gaussian.GaussianLog(gaussian_log_file, check_for_errors=False)
+        return gl.load_energy()
+
+
+def get_lowest_energy_gaussian_file(base_dir):
+    """Function to get the lowest energy gaussian .log file from a directory"""
+    lowest_energy = 1e6
+    lowest_file = None
+    log_files = glob.glob(os.path.join(base_dir, '*.log'))
+    for gaussian_log_file in log_files:
+        energy = get_gaussian_file_energy(gaussian_log_file)
+        if energy is None:
+            continue
+        if energy < lowest_energy:
+            lowest_energy = energy
+            lowest_file = gaussian_log_file
+    return lowest_file
+
+
+def get_rotor_info(conformer, torsion, torsion_index):
+    _, j, k, _ = torsion.atom_indices
+
+    # Adjusted since mol's IDs start from 0 while Arkane's start from 1
+    tor_center_adj = [j + 1, k + 1]
+
+    tor_log = f'rotor_{torsion_index:04}.log'
+    top_IDs = []
+    for num, tf in enumerate(torsion.mask):
+        if tf:
+            top_IDs.append(num)
+
+    # Adjusted to start from 1 instead of 0
+    top_IDs_adj = [ID + 1 for ID in top_IDs]
+
+    info = f"     HinderedRotor(scanLog=Log('{tor_log}'), pivots={tor_center_adj}, top={top_IDs_adj}, fit='fourier'),"
+
+    return info
+
+
+def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors=False):
+    # assume rotor and conformer logs have already been copied into the arkane directory
+    label = conformer.smiles
+    species_name = os.path.basename(gauss_log[:-4])
+    parser = cclib.io.ccread(gauss_log)
+    symbol_dict = {
+        35: "Br",
+        17: "Cl",
+        9: "F",
+        8: "O",
+        7: "N",
+        6: "C",
+        1: "H",
+        18: "Ar",
+        2: "He",
+        10: "Ne",
+    }
+
+    atoms = []
+
+    for atom_num, coords in zip(parser.atomnos, parser.atomcoords[-1]):
+        atoms.append(ase.Atom(symbol=symbol_dict[atom_num], position=coords))
+
+    conformer._ase_molecule = ase.Atoms(atoms)
+    conformer.update_coords_from("ase")
+    mol = conformer.rmg_molecule
+    output = ['#!/usr/bin/env python',
+              '# -*- coding: utf-8 -*-', ]
+
+    output += ["", f"spinMultiplicity = {conformer.rmg_molecule.multiplicity}", ""]
+    model_chemistry = 'M06-2X/cc-pVTZ'
+
+    # use relative path for easy transfer -- assume we will copy the log files into the Arkane folder
+    gauss_log_relative = os.path.basename(gauss_log)
+    output += ["energy = {", f"    '{model_chemistry}': Log('{gauss_log_relative}'),", "}", ""]  # fix this
+
+    output += [f"geometry = Log('{gauss_log_relative}')", ""]
+    output += [
+        f"frequencies = Log('{gauss_log_relative}')", ""]
+
+    # get the rotors
+    torsions = conformer.get_torsions()
+    n_rotors = len(torsions)
+
+    if include_rotors and n_rotors > 0:
+        output += ["rotors = ["]
+        if len(conformer.torsions) == 0:
+            conformer.get_molecules()
+            conformer.get_geometries()
+        for i, torsion in enumerate(conformer.torsions):
+            output += [get_rotor_info(conformer, torsion, i)]
+        output += ["]"]
+
+    input_string = ""
+
+    for t in output:
+        input_string += t + "\n"
+
+    with open(os.path.join(arkane_dir, species_name + '.py'), "w") as f:
+        f.write(input_string)
+    return True
+
+
+def setup_arkane_species(species_index, include_rotors=False):
+    """Function to set up the Arkane species directory for a given species
+    default is to not do rotors. But if rotors are specified, the arkane directory
+    will be arkane_rotors
+    """
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    conformer_dir = os.path.join(species_dir, 'conformers')
+    arkane_dir = os.path.join(species_dir, 'arkane')
+    os.makedirs(arkane_dir, exist_ok=True)
+    if include_rotors:
+        arkane_dir = os.path.join(species_dir, 'arkane_rotors')
+    species_log(species_index, f'Setting up Arkane species')
+    if arkane_species_complete(species_index):
+        species_log(species_index, f'Arkane species already complete')
+        return True
+
+    species_smiles = species_index2smiles(species_index)
+    # make a conformer object from the SMILES
+    new_cf = autotst.species.Conformer(smiles=species_smiles)
+    # read the conformer geometry from the file
+    conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
+    
+    shutil.copy(conformer_file, arkane_dir)
+    with open(conformer_file, 'r') as f:
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+
+    new_cf._ase_molecule = atoms
+    new_cf.update_coords_from(mol_type="ase")
+
+    if include_rotors:
+        rotor_dir = os.path.join(species_dir, 'rotors')
+        torsions = new_cf.get_torsions()
+        for i, torsion in enumerate(torsions):
+            # TODO check for valid output
+            torfile = os.path.join(rotor_dir, f'rotor_{i:04}.log')
+            shutil.copy(torfile, arkane_dir)
+
+    # write the Arkane conformer file
+    write_arkane_conformer_file(new_cf, conformer_file, arkane_dir, include_rotors=include_rotors)
+
+    # write the Arkane input file
+    input_file = os.path.join(arkane_dir, 'input.py')
+    formula = new_cf.rmg_molecule.get_formula()
+    lines = [
+        '#!/usr/bin/env python\n\n',
+        f'modelChemistry = "M06-2X/cc-pVTZ"\n',
+        f'useHinderedRotors = {include_rotors}' + '\n',
+        'useBondCorrections = False\n\n',
+
+        'frequencyScaleFactor = 0.982\n',
+
+        f"species('{formula}', '{os.path.basename(conformer_file[:-4])}.py', structure=SMILES('{new_cf.rmg_molecule.smiles}'))\n\n",
+
+        f"thermo('{formula}', 'NASA')\n",
+    ]
+    with open(input_file, 'w') as f:
+        f.writelines(lines)
+
+    # copy a run script into the arkane directory
+    run_script = os.path.join(arkane_dir, 'run_arkane.sh')
+    with open(run_script, 'w') as f:
+        # Run on express
+        f.write('#!/bin/bash\n')
+        f.write('#SBATCH --partition=express,short,west\n')
+        f.write('#SBATCH --time=00:20:00\n\n')
+        f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
+
+
 if __name__ == '__main__':
+    setup_arkane_species(87)
+    exit(0)
+
     # run one
 
     if len(sys.argv) > 1:
