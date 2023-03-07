@@ -26,8 +26,8 @@ import ase.io.gaussian
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    # DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
-    DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
+    DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
+    # DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
 
 MAX_JOBS_RUNNING = 40
 
@@ -192,6 +192,15 @@ def screen_conformers(species_index):
         import ase.calculators.lj
         species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
         calc = ase.calculators.lj.LennardJones()
+    # hotbit can't handle Ar, He, change calculator to lj if it's in the species
+    hotbit_skiplist = ['AR', 'HE', 'NE']
+    for element in hotbit_skiplist:
+        if element in species_smiles.upper():
+            import ase.calculators.lj
+            species_log(species_index, f'Using built-in ase LennardJones calculator instead of Hotbit for {element}')
+            calc = ase.calculators.lj.LennardJones()
+            break
+
     spec.generate_conformers(
         ase_calculator=calc,
         max_combos=10000,
@@ -246,7 +255,7 @@ def optimize_conformers(species_index):
     n_conformers = len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com')))
     restart = False
     rerun_indices = []
-    for i in range(0, len(n_conformers)):
+    for i in range(0, n_conformers):
         conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
         if os.path.exists(conformer_logfile):
             termination_status = termination_status(conformer_logfile)
@@ -541,26 +550,28 @@ def setup_arkane_species(species_index, include_rotors=False):
 
 
 if __name__ == '__main__':
-    setup_arkane_species(87)
-    exit(0)
+    # setup_arkane_species(87)
+    # exit(0)
 
     # run one
 
-    if len(sys.argv) > 1:
-        species_index = int(sys.argv[1])
-    else:
-        species_index = 87
-    screen_conformers(species_index)
-    optimize_conformers(species_index)
-    exit(0)
+    # if len(sys.argv) > 1:
+    #     species_index = int(sys.argv[1])
+    # else:
+    #     species_index = 87
+    # screen_conformers(species_index)
+    # optimize_conformers(species_index)
+    # exit(0)
     # run all
     # wait until # jobs is below 40 to start a new thing:
     import job_manager
 
     # for species_index in range(40, 65):
-    for species_index in range(101, 110):
+    #for species_index in range(15, 110):
+    for species_index in range(0, 15):
         jobs_running = job_manager.count_slurm_jobs()
         while jobs_running > 40:
             time.sleep(60)
             jobs_running = job_manager.count_slurm_jobs()
         screen_conformers(species_index)
+        optimize_conformers(species_index)
