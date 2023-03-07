@@ -17,7 +17,7 @@ import shutil
 import cclib.io
 
 import autotst.species
-import autotst.species
+import autotst.reaction
 import autotst.calculator.gaussian
 
 import ase.io.gaussian
@@ -26,8 +26,8 @@ import ase.io.gaussian
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
-    # DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
+    # DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
+    DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
 
 MAX_JOBS_RUNNING = 40
 
@@ -83,6 +83,15 @@ def species_log(species_index, message):
         f.write(f'{datetime.datetime.now()} {message}' + '\n')
 
 
+def reaction_log(reaction_index, message):
+    """Function to log messages to the reaction log file"""
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    logfile = os.path.join(reaction_dir, 'thermokinetic_fun.log')
+    print(f'{datetime.datetime.now()} {message}')
+    with open(logfile, 'a') as f:
+        f.write(f'{datetime.datetime.now()} {message}' + '\n')
+
+
 def species_index2smiles(species_index):
     """Function to return species smiles given a species index
     looks up the results in the species_list.csv
@@ -91,6 +100,16 @@ def species_index2smiles(species_index):
     species_df = pd.read_csv(species_csv)
     species_index = species_df['SMILES'].values[species_index]
     return species_index
+
+
+def reaction_index2smiles(reaction_index):
+    """Function to return reaction smiles given a reaction index
+    looks up the results in the reaction_list.csv
+    """
+    reaction_csv = os.path.join(DFT_DIR, 'reaction_list.csv')
+    reaction_df = pd.read_csv(reaction_csv)
+    reaction_smiles = reaction_df['SMILES'].values[reaction_index]
+    return reaction_smiles
 
 
 def get_species_status(species_index, job_type):
@@ -112,13 +131,57 @@ def get_species_status(species_index, job_type):
     return False
 
 
+def get_reaction_status(reaction_index, job_type):
+    """Check the status of the part of the reaction calculation by looking in the status file
+    Possibilities are:
+        - screen_conformers - complete if the conformer optimization files have been generated
+        - shell_opt - run Gaussian to optimize the conformers
+        - center_opt
+        - overall_opt
+        - arkane?
+    """
+    status_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}', 'status.yaml')
+    if not os.path.exists(status_file):
+        return False
+    with open(status_file, 'r') as f:
+        try:
+            status = yaml.load(f, Loader=yaml.FullLoader)
+        except AttributeError:
+            status = yaml.safe_load(f)
+    if job_type in status:
+        return status[job_type]
+    return False
+
+
 def set_species_status(species_index, job_type, job_status):
-    """Set the status of the part of the species calculation by looking in the status file
+    """Set the status of the part of the species calculation by writing the status file
     Possibilities are:
         - screen_conformers - complete if the conformer optimization files have been generated
         - conformer_opt - run Gaussian to optimize the conformers
     """
     status_file = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'status.yaml')
+    status = {}
+    if os.path.exists(status_file):
+        with open(status_file, 'r') as f:
+            try:
+                status = yaml.load(f, Loader=yaml.FullLoader)
+            except AttributeError:
+                status = yaml.safe_load(f)
+    status[job_type] = job_status
+    with open(status_file, 'w') as f:
+        yaml.dump(status, f)
+
+
+def set_reaction_status(reaction_index, job_type, job_status):
+    """Set the status of the part of the reaction calculation by writing the status file
+    Possibilities are:
+        - screen_conformers - complete if the conformer optimization files have been generated
+        - shell_opt - run Gaussian to optimize the conformers
+        - center_opt
+        - overall_opt
+        - arkane?
+    """
+    status_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}', 'status.yaml')
     status = {}
     if os.path.exists(status_file):
         with open(status_file, 'r') as f:
@@ -158,7 +221,7 @@ def ordered_array_str(list_of_indices):
     return array_str
 
 
-def screen_conformers(species_index):
+def screen_species_conformers(species_index):
     """Sort through all the possible conformers and use a cheap calculator
     like Hotbit or LJ to screen the best options to investigate
 
@@ -172,11 +235,6 @@ def screen_conformers(species_index):
     conformer_dir = os.path.join(species_dir, 'conformers')
     os.makedirs(conformer_dir, exist_ok=True)
     species_log(species_index, f'Starting conformer screening job')
-
-    # check if the run was already completed
-    if get_species_status(species_index, 'screen_conformers'):
-        species_log(species_index, f'Conformer screening already ran')
-        return True
 
     # ------------------ Use Hotbit to screen the conformers ------------------
     # Get species smiles
@@ -502,7 +560,7 @@ def setup_arkane_species(species_index, include_rotors=False):
     new_cf = autotst.species.Conformer(smiles=species_smiles)
     # read the conformer geometry from the file
     conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
-    
+
     shutil.copy(conformer_file, arkane_dir)
     with open(conformer_file, 'r') as f:
         atoms = ase.io.gaussian.read_gaussian_out(f)
@@ -549,7 +607,95 @@ def setup_arkane_species(species_index, include_rotors=False):
         f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
 
 
+def delete_double_spaces(gaussian_com_file):
+    # Get rid of first double-linespace found,
+    # usually between xyz and modredundant sections
+    double_space = False
+    lines = []
+    with open(gaussian_com_file, 'r') as f:
+        lines = f.readlines()
+        for j in range(1, len(lines)):
+            if lines[j] == '\n' and lines[j - 1] == '\n':
+                double_space = True
+                break
+    if double_space:
+        lines = lines[0:j - 1] + lines[j:]
+        with open(gaussian_com_file, 'w') as f:
+            f.writelines(lines)
+
+
+def screen_reaction_ts(reaction_index, direction='forward'):
+    """Function to screen TS conformers for a given reaction
+    Writes the resulting conformers as gaussian input files in the shell directory
+    """
+    # check if the screening already ran
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    if get_reaction_status(reaction_index, 'screen_conformers'):
+        reaction_log(reaction_index, 'Conformers already screened')
+        return True
+
+    screen_dir = os.path.join(reaction_dir, 'screen')
+    os.makedirs(screen_dir, exist_ok=True)
+    reaction_log(reaction_index, f'Starting conformer screening job')
+
+    shell_dir = os.path.join(reaction_dir, 'shell')
+    os.makedirs(shell_dir, exist_ok=True)
+
+    # ------------------ Use Hotbit to screen the conformers ------------------
+    # Get reaction smiles
+    reaction_smiles = reaction_index2smiles(reaction_index)
+    reaction_log(reaction_index, f'Constructing reaction in AutoTST...')
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)
+
+    reaction.ts[direction][0].get_molecules()
+    try:
+        import hotbit
+        calc = hotbit.Hotbit()
+    except (ImportError, RuntimeError):
+        # if hotbit fails, use built-in lennard jones
+        import ase.calculators.lj
+        reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+        calc = ase.calculators.lj.LennardJones()
+    reaction.generate_conformers(
+        ase_calculator=calc,
+        save_results=True,
+        results_dir=screen_dir,
+    )
+    reaction_log(reaction_index, f'Done generating conformers in AutoTST...')
+    reaction_log(reaction_index, f'{len(reaction.ts[direction])} conformers found')
+
+    # -------------- Write the results as gaussiuan calculations in the shell dir
+    # Check for already finished shell logfiles
+    # first, return if all of them have finished
+    shell_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        shell_label = 'rev_ts_0000.log'
+
+    for i in range(0, len(reaction.ts[direction])):
+        shell_label = shell_label[:-8] + f'{i:04}.log'
+
+        ts = reaction.ts[direction][i]
+        gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
+        calc = gaussian.get_shell_calc()
+        calc.label = shell_label[:-4]
+        calc.directory = shell_dir
+        calc.parameters.pop('scratch')
+        calc.parameters.pop('multiplicity')
+        calc.parameters['mult'] = ts.rmg_molecule.multiplicity
+        calc.write_input(ts.ase_molecule)
+
+        # Get rid of double-space between xyz block and mod-redundant section
+        delete_double_spaces(os.path.join(shell_dir, calc.label + '.com'))
+
+    # write to the status file to indicate that the conformer screening is complete
+    set_reaction_status(reaction_index, 'screen_conformers', True)
+    reaction_log(reaction_index, f'Conformer screening complete')
+    return True
+
+
 if __name__ == '__main__':
+    screen_reaction_ts(288, direction='forward')
+    exit(0)
     # setup_arkane_species(87)
     # exit(0)
 
@@ -567,11 +713,11 @@ if __name__ == '__main__':
     import job_manager
 
     # for species_index in range(40, 65):
-    #for species_index in range(15, 110):
+    # for species_index in range(15, 110):
     for species_index in range(0, 15):
         jobs_running = job_manager.count_slurm_jobs()
         while jobs_running > 40:
             time.sleep(60)
             jobs_running = job_manager.count_slurm_jobs()
-        screen_conformers(species_index)
+        screen_species_conformers(species_index)
         optimize_conformers(species_index)
