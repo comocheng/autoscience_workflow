@@ -26,8 +26,8 @@ import ase.io.gaussian
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    # DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
-    DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
+    DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
+    # DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
 
 MAX_JOBS_RUNNING = 40
 
@@ -657,6 +657,8 @@ def screen_reaction_ts(reaction_index, direction='forward'):
         calc = ase.calculators.lj.LennardJones()
     reaction.generate_conformers(
         ase_calculator=calc,
+        max_combos=1000,
+        max_conformers=100,
         save_results=True,
         results_dir=screen_dir,
     )
@@ -714,7 +716,7 @@ def run_shell_opt(reaction_index, direction='forward'):
         set_reaction_status(reaction_index, 'shell_opt', True)
         return True
 
-    n_conformers = len(glob.glob(os.path.join(shell_dir, f'{shell_label[:-8]}_*.com')))
+    n_conformers = len(glob.glob(os.path.join(shell_dir, f'{shell_label[:-8]}*.com')))
     rerun_indices = []
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(shell_dir, f'conformer_{i:04}.log')
@@ -772,13 +774,24 @@ def run_shell_opt(reaction_index, direction='forward'):
     while jobs_running > MAX_JOBS_RUNNING:
         time.sleep(60)
         jobs_running = job_manager.count_slurm_jobs()
-
     gaussian_shell_opt_job.submit(slurm_cmd)
     os.chdir(start_dir)
 
 
 if __name__ == '__main__':
-    screen_reaction_ts(288, direction='forward')
+    top_reactions = [915, 749, 324, 419, 1814, 1287, 748, 1288, 370, 1103,
+        371, 213, 420, 581, 464, 1289, 720, 722, 1658, 574, 725, 1736,
+        418, 1290, 1721, 1665, 1685, 427, 1714, 1766, 655, 1773, 1003, 650,
+        985, 918, 585, 692, 1532, 1326, 1578, 1428, 916, 595, 693, 1242]
+    
+    if len(sys.argv) > 1:
+        reaction_index = int(sys.argv[1])
+        screen_reaction_ts(reaction_index)
+    else:
+        for rxn in top_reactions:
+            print('Screen reaction', rxn)
+            screen_reaction_ts(rxn)
+            run_shell_opt(rxn)
     exit(0)
     # setup_arkane_species(87)
     # exit(0)
