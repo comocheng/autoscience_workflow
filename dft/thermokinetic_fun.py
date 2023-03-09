@@ -305,13 +305,12 @@ def optimize_conformers(species_index):
     if get_species_status(species_index, 'conformer_opt'):
         species_log(species_index, f'Conformer optimization already ran')
         return True
-    if conformers_done_optimizing(species_index):
+    if conformers_done_optimizing(conformer_dir):
         species_log(species_index, f'Conformer optimization already ran')
         set_species_status(species_index, 'conformer_opt', True)
         return True
 
     n_conformers = len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com')))
-    restart = False
     rerun_indices = []
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
@@ -374,16 +373,14 @@ def optimize_conformers(species_index):
     os.chdir(start_dir)
 
 
-def conformers_done_optimizing(species_index, completion_threshold=0.9):
+def conformers_done_optimizing(base_dir, completion_threshold=0.9, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
-    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
-    conformer_dir = os.path.join(species_dir, 'conformers')
-    n_conformers = len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com')))
+    n_conformers = len(glob.glob(os.path.join(base_dir, f'{base_name}*.com')))
     incomplete_indices = []
     good_runs = []
     finished_runs = []
     for i in range(0, n_conformers):
-        conformer_file = os.path.join(conformer_dir, f'conformer_{i:04}.log')
+        conformer_file = os.path.join(base_dir, f'{base_name}{i:04}.log')
         if not os.path.exists(conformer_file):
             return False
         opt_status = termination_status(conformer_file)
@@ -408,10 +405,12 @@ def wait_for_conformer_opt(species_index):
         species_log(species_index, f'Conformer optimization already ran')
         return True
 
-    opt_completed = conformers_done_optimizing(species_index)
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    conformer_dir = os.path.join(species_dir, 'conformers')
+    opt_completed = conformers_done_optimizing(conformer_dir)
     while not opt_completed:
         time.sleep(60)
-        opt_completed = conformers_done_optimizing(species_index)
+        opt_completed = conformers_done_optimizing(conformer_dir)
 
     # write to the status file to indicate that the conformer screening is complete
     set_species_status(species_index, 'conformer_opt', True)
@@ -691,6 +690,91 @@ def screen_reaction_ts(reaction_index, direction='forward'):
     set_reaction_status(reaction_index, 'screen_conformers', True)
     reaction_log(reaction_index, f'Conformer screening complete')
     return True
+
+
+def run_shell_opt(reaction_index, direction='forward'):
+    """Run optimization on the shell (freeze reaction core and relax the rest of the molecule)
+    """
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    shell_dir = os.path.join(reaction_dir, 'shell')
+    os.makedirs(shell_dir, exist_ok=True)
+    reaction_log(reaction_index, f'Starting shell optimization job')
+
+    # check if the run was already completed
+    if get_reaction_status(reaction_index, 'shell_opt'):
+        reaction_log(reaction_index, f'Shell optimization already ran')
+        return True
+
+    # manually check if the shell optimizations are complete
+    shell_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        shell_label = 'rev_ts_0000.log'
+    if conformers_done_optimizing(shell_dir, base_name=shell_label[:-8]):
+        reaction_log(reaction_index, f'TS optimization already ran')
+        set_reaction_status(reaction_index, 'shell_opt', True)
+        return True
+
+    n_conformers = len(glob.glob(os.path.join(shell_dir, f'{shell_label[:-8]}_*.com')))
+    rerun_indices = []
+    for i in range(0, n_conformers):
+        conformer_logfile = os.path.join(shell_dir, f'conformer_{i:04}.log')
+        if os.path.exists(conformer_logfile):
+            termination_status = termination_status(conformer_logfile)
+            if termination_status == 1 or termination_status == -1:
+                rerun_indices.append(i)
+
+    # Make slurm script to run all the conformer calculations
+    slurm_run_file = os.path.join(shell_dir, 'run.sh')
+    slurm_settings = {
+        '--job-name': f'g16_shell_{reaction_index}',
+        '--error': 'error.log',
+        '--nodes': 1,
+        '--partition': 'west,short',
+        '--exclude': 'c5003',
+        '--mem': '20Gb',
+        '--time': '24:00:00',
+        '--cpus-per-task': 16,
+        '--array': f'0-{n_conformers - 1}%30',
+    }
+    if rerun_indices:
+        slurm_run_file = os.path.join(shell_dir, 'rerun.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
+
+    slurm_file_writer = job_manager.SlurmJobFile(
+        full_path=slurm_run_file,
+    )
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        f'fname="{shell_label[:-8]}' + '${RUN_i}.com"\n\n',
+
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(shell_dir)
+    gaussian_shell_opt_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    gaussian_shell_opt_job.submit(slurm_cmd)
+    os.chdir(start_dir)
 
 
 if __name__ == '__main__':
