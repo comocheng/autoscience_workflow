@@ -850,7 +850,7 @@ def setup_center_opt(reaction_index, direction='forward'):
         ts = reaction.ts[direction][i]
         gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
         calc = gaussian.get_center_calc()
-        calc.label = center_label[:-4]
+        calc.label = center_label[:-4]  # this should probably be fixed in autotst
         calc.directory = center_dir
         calc.parameters.pop('scratch')
         calc.parameters.pop('multiplicity')
@@ -940,6 +940,173 @@ def run_center_opt(reaction_index, direction='forward'):
     # submit the job
     start_dir = os.getcwd()
     os.chdir(center_dir)
+    gaussian_center_opt_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+    gaussian_center_opt_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
+def setup_overall_opt(reaction_index, direction='forward'):
+    """Function to generate gaussian files for overall calculation
+    """
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    screen_dir = os.path.join(reaction_dir, 'screen')
+    center_dir = os.path.join(reaction_dir, 'center')
+    overall_dir = os.path.join(reaction_dir, 'overall')
+    os.makedirs(overall_dir, exist_ok=True)
+    reaction_log(reaction_index, f'Starting to set up overall optimization')
+
+    overall_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        overall_label = 'rev_ts_0000.log'
+    center_label = overall_label
+
+    # check if the overall run was already completed
+    if get_reaction_status(reaction_index, 'overall_opt'):
+        reaction_log(reaction_index, f'Center optimization already ran')
+        return True
+    elif conformers_done_optimizing(overall_dir, base_name=overall_label[:-8]):
+        reaction_log(reaction_index, f'TS overall optimization already ran')
+        set_reaction_status(reaction_index, 'overall_opt', True)
+        return True
+
+    # don't run unless the center optimization is complete - you can hack this by copying (or renaming)
+    # the shell dir to the center dir
+    # manually check if the center optimizations are complete
+    if conformers_done_optimizing(center_dir, base_name=center_label[:-8]):
+        reaction_log(reaction_index, f'TS center optimization finished')
+        set_reaction_status(reaction_index, 'center_opt', True)
+    else:
+        reaction_log(reaction_index, f'Center optimization not complete')
+        return False
+
+    # ----------------------- make the gaussian files for the overall calculation 
+    # (have to reconstruct the AutoTST TS object)
+    # Get reaction smiles
+    reaction_smiles = reaction_index2smiles(reaction_index)
+    reaction_log(reaction_index, f'Reconstructing overall reaction in AutoTST...')
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)
+
+    reaction.ts[direction][0].get_molecules()
+    #try:
+    import hotbit
+    calc = hotbit.Hotbit()
+    #except (ImportError, RuntimeError):
+    #    # if hotbit fails, use built-in lennard jones
+    #    import ase.calculators.lj
+    #    reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+    #    calc = ase.calculators.lj.LennardJones()
+    reaction.generate_conformers(
+        ase_calculator=calc,
+        max_combos=1000,
+        max_conformers=100,
+        save_results=True,
+        results_dir=screen_dir,
+    )
+    reaction_log(reaction_index, f'Done (re)generating conformers in AutoTST...')
+    reaction_log(reaction_index, f'{len(reaction.ts[direction])} conformers found')
+
+    # ------------ apply the geometry from the shell calculation
+    for i in range(0, len(reaction.ts[direction])):
+        center_opt = os.path.join(center_dir, f'{center_label[:-8]}{i:04}.log')
+        with open(center_opt, 'r') as f:
+            atoms = ase.io.gaussian.read_gaussian_out(f)
+            reaction.ts[direction][i]._ase_molecule = atoms
+
+        overall_label = overall_label[:-8] + f'{i:04}.log'
+
+        ts = reaction.ts[direction][i]
+        gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
+        calc = gaussian.get_overall_calc()
+        calc.label = overall_label[:-4]  # this should probably be fixed in autotst
+        calc.directory = overall_dir
+        calc.parameters.pop('scratch')
+        calc.parameters.pop('multiplicity')
+        calc.parameters['mult'] = ts.rmg_molecule.multiplicity
+        calc.write_input(ts.ase_molecule)
+
+        # Get rid of double-space between xyz block and mod-redundant section
+        delete_double_spaces(os.path.join(center_dir, calc.label + '.com'))
+
+
+def run_overall_opt(reaction_index, direction='forward'):
+    """Run center calc using shell results (freeze reaction extremity and optimize core to loose saddle point)
+    """
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    overall_dir = os.path.join(reaction_dir, 'overall')
+    os.makedirs(overall_dir, exist_ok=True)
+    reaction_log(reaction_index, f'Starting overall optimization job')
+
+    # manually check if the center optimizations are complete
+    overall_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        overall_label = 'rev_ts_0000.log'
+
+    # check if the run was already completed
+    if get_reaction_status(reaction_index, 'overall_opt'):
+        reaction_log(reaction_index, f'overall optimization already ran')
+        return True
+    elif conformers_done_optimizing(overall_dir, base_name=overall_label[:-8]):
+        reaction_log(reaction_index, f'overall optimization already ran')
+        set_reaction_status(reaction_index, 'overall_opt', True)
+        return True
+
+    n_conformers = len(glob.glob(os.path.join(overall_dir, f'{overall_label[:-8]}*.com')))
+    rerun_indices = []
+    for i in range(0, n_conformers):
+        conformer_logfile = os.path.join(overall_dir, f'{overall_label[:-8]}{i:04}.log')
+        if os.path.exists(conformer_logfile):
+            termination_status = termination_status(conformer_logfile)
+            if termination_status == 1 or termination_status == -1:
+                rerun_indices.append(i)
+
+    # Make slurm script to run all the conformer calculations
+    slurm_run_file = os.path.join(overall_dir, 'run.sh')
+    slurm_settings = {
+        '--job-name': f'g16_center_{reaction_index}',
+        '--error': 'error.log',
+        '--nodes': 1,
+        '--partition': 'west,short',
+        '--exclude': 'c5003',
+        '--mem': '20Gb',
+        '--time': '24:00:00',
+        '--cpus-per-task': 16,
+        '--array': f'0-{n_conformers - 1}%30',
+    }
+    if rerun_indices:
+        slurm_run_file = os.path.join(overall_dir, 'rerun.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
+
+    slurm_file_writer = job_manager.SlurmJobFile(
+        full_path=slurm_run_file,
+    )
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        f'fname="{overall_label[:-8]}' + '${RUN_i}.com"\n\n',
+
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(overall_dir)
     gaussian_center_opt_job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {slurm_run_file}"
 
