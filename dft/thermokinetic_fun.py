@@ -376,6 +376,9 @@ def optimize_conformers(species_index):
 def conformers_done_optimizing(base_dir, completion_threshold=0.9, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     n_conformers = len(glob.glob(os.path.join(base_dir, f'{base_name}*.com')))
+    if n_conformers == 0:
+        return False
+        #print(f'No conformers with basename {base_name} found in {base_dir}')
     incomplete_indices = []
     good_runs = []
     finished_runs = []
@@ -1069,7 +1072,7 @@ def run_overall_opt(reaction_index, direction='forward'):
     # Make slurm script to run all the conformer calculations
     slurm_run_file = os.path.join(overall_dir, 'run.sh')
     slurm_settings = {
-        '--job-name': f'g16_center_{reaction_index}',
+        '--job-name': f'g16_overall_{reaction_index}',
         '--error': 'error.log',
         '--nodes': 1,
         '--partition': 'west,short',
