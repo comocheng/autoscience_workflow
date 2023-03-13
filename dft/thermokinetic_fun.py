@@ -719,7 +719,7 @@ def run_shell_opt(reaction_index, direction='forward'):
     n_conformers = len(glob.glob(os.path.join(shell_dir, f'{shell_label[:-8]}*.com')))
     rerun_indices = []
     for i in range(0, n_conformers):
-        conformer_logfile = os.path.join(shell_dir, f'conformer_{i:04}.log')
+        conformer_logfile = os.path.join(shell_dir, f'{shell_label[:-8]}{i:04}.log')
         if os.path.exists(conformer_logfile):
             termination_status = termination_status(conformer_logfile)
             if termination_status == 1 or termination_status == -1:
@@ -778,12 +778,185 @@ def run_shell_opt(reaction_index, direction='forward'):
     os.chdir(start_dir)
 
 
+def setup_center_opt(reaction_index, direction='forward'):
+    """Function to generate gaussian files for center calculation
+    """
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    screen_dir = os.path.join(reaction_dir, 'screen')
+    shell_dir = os.path.join(reaction_dir, 'shell')
+    center_dir = os.path.join(reaction_dir, 'center')
+    os.makedirs(center_dir, exist_ok=True)
+    reaction_log(reaction_index, f'Starting center optimization job')
+
+    # check if the run was already completed
+    if get_reaction_status(reaction_index, 'center_opt'):
+        reaction_log(reaction_index, f'Center optimization already ran')
+        return True
+
+    # don't run unless the shell optimization is complete
+    if not get_reaction_status(reaction_index, 'shell_opt'):
+        reaction_log(reaction_index, f'Shell optimization not complete')
+        return False
+
+    # manually check if the center optimizations are complete
+    center_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        center_label = 'rev_ts_0000.log'
+    shell_label = center_label
+
+    # ----------------------- make the gaussian files for the center calculation 
+    # (have to reconstruct the AutoTST TS object)
+    # Get reaction smiles
+    reaction_smiles = reaction_index2smiles(reaction_index)
+    reaction_log(reaction_index, f'Reconstructing reaction in AutoTST...')
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)
+
+    reaction.ts[direction][0].get_molecules()
+    try:
+        import hotbit
+        calc = hotbit.Hotbit()
+    except (ImportError, RuntimeError):
+        # if hotbit fails, use built-in lennard jones
+        import ase.calculators.lj
+        reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+        calc = ase.calculators.lj.LennardJones()
+    reaction.generate_conformers(
+        ase_calculator=calc,
+        max_combos=1000,
+        max_conformers=100,
+        save_results=True,
+        results_dir=screen_dir,
+    )
+    reaction_log(reaction_index, f'Done (re)generating conformers in AutoTST...')
+    reaction_log(reaction_index, f'{len(reaction.ts[direction])} conformers found')
+
+    # ------------ apply the geometry from the shell calculation
+    for i in range(0, len(reaction.ts[direction])):
+        shell_opt = os.path.join(shell_dir, f'{shell_label[:-8]}{i:04}.log')
+        try:
+            with open(shell_opt, 'r') as f:
+                atoms = ase.io.gaussian.read_gaussian_out(f)
+                reaction.ts[direction][i]._ase_molecule = atoms
+        except IndexError:
+            # handle case where all degrees of freedom were frozen in the shell calculation
+            if len(reaction.ts[direction][i]._ase_molecule) > 3:
+                raise ValueError('Shell optimization failed to converge. Rerun it!')
+
+        center_label = center_label[:-8] + f'{i:04}.log'
+
+        ts = reaction.ts[direction][i]
+        gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
+        calc = gaussian.get_center_calc()
+        calc.label = center_label[:-4]
+        calc.directory = center_dir
+        calc.parameters.pop('scratch')
+        calc.parameters.pop('multiplicity')
+        calc.parameters['mult'] = ts.rmg_molecule.multiplicity
+        calc.write_input(ts.ase_molecule)
+
+        # Get rid of double-space between xyz block and mod-redundant section
+        delete_double_spaces(os.path.join(center_dir, calc.label + '.com'))
+
+
+def run_center_opt(reaction_index, direction='forward'):
+    """Run center calc using shell results (freeze reaction extremity and optimize core to loose saddle point)
+    """
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    center_dir = os.path.join(reaction_dir, 'center')
+    os.makedirs(center_dir, exist_ok=True)
+    reaction_log(reaction_index, f'Starting center optimization job')
+
+    # check if the run was already completed
+    if get_reaction_status(reaction_index, 'center_opt'):
+        reaction_log(reaction_index, f'Center optimization already ran')
+        return True
+
+    # don't run unless the shell optimization is complete
+    if not get_reaction_status(reaction_index, 'shell_opt'):
+        reaction_log(reaction_index, f'Shell optimization not complete')
+        return False
+
+    # manually check if the center optimizations are complete
+    center_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        center_label = 'rev_ts_0000.log'
+    shell_label = center_label
+
+    if conformers_done_optimizing(center_dir, base_name=center_label[:-8]):
+        reaction_log(reaction_index, f'Center TS optimization already ran')
+        set_reaction_status(reaction_index, 'center_opt', True)
+        return True
+
+    n_conformers = len(glob.glob(os.path.join(center_dir, f'{center_label[:-8]}*.com')))
+    rerun_indices = []
+    for i in range(0, n_conformers):
+        conformer_logfile = os.path.join(center_dir, f'{center_label[:-8]}{i:04}.log')
+        if os.path.exists(conformer_logfile):
+            termination_status = termination_status(conformer_logfile)
+            if termination_status == 1 or termination_status == -1:
+                rerun_indices.append(i)
+
+    # Make slurm script to run all the conformer calculations
+    slurm_run_file = os.path.join(center_dir, 'run.sh')
+    slurm_settings = {
+        '--job-name': f'g16_center_{reaction_index}',
+        '--error': 'error.log',
+        '--nodes': 1,
+        '--partition': 'west,short',
+        '--exclude': 'c5003',
+        '--mem': '20Gb',
+        '--time': '24:00:00',
+        '--cpus-per-task': 16,
+        '--array': f'0-{n_conformers - 1}%30',
+    }
+    if rerun_indices:
+        slurm_run_file = os.path.join(center_dir, 'rerun.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
+
+    slurm_file_writer = job_manager.SlurmJobFile(
+        full_path=slurm_run_file,
+    )
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        f'fname="{center_label[:-8]}' + '${RUN_i}.com"\n\n',
+
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(center_dir)
+    gaussian_center_opt_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+    gaussian_center_opt_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
 if __name__ == '__main__':
-    top_reactions = [915, 749, 324, 419, 1814, 1287, 748, 1288, 370, 1103,
+    top_reactions = [
+        915, 749, 324, 419, 1814, 1287, 748, 1288, 370, 1103,
         371, 213, 420, 581, 464, 1289, 720, 722, 1658, 574, 725, 1736,
         418, 1290, 1721, 1665, 1685, 427, 1714, 1766, 655, 1773, 1003, 650,
-        985, 918, 585, 692, 1532, 1326, 1578, 1428, 916, 595, 693, 1242]
-    
+        985, 918, 585, 692, 1532, 1326, 1578, 1428, 916, 595, 693, 1242
+    ]
+
     if len(sys.argv) > 1:
         reaction_index = int(sys.argv[1])
         screen_reaction_ts(reaction_index)
