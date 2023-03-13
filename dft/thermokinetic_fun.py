@@ -786,7 +786,7 @@ def setup_center_opt(reaction_index, direction='forward'):
     shell_dir = os.path.join(reaction_dir, 'shell')
     center_dir = os.path.join(reaction_dir, 'center')
     os.makedirs(center_dir, exist_ok=True)
-    reaction_log(reaction_index, f'Starting center optimization job')
+    reaction_log(reaction_index, f'Starting to set up center optimization')
 
     # check if the run was already completed
     if get_reaction_status(reaction_index, 'center_opt'):
@@ -794,6 +794,14 @@ def setup_center_opt(reaction_index, direction='forward'):
         return True
 
     # don't run unless the shell optimization is complete
+    # manually check if the shell optimizations are complete
+    shell_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        shell_label = 'rev_ts_0000.log'
+    if conformers_done_optimizing(shell_dir, base_name=shell_label[:-8]):
+        reaction_log(reaction_index, f'TS optimization already ran')
+        set_reaction_status(reaction_index, 'shell_opt', True)
+
     if not get_reaction_status(reaction_index, 'shell_opt'):
         reaction_log(reaction_index, f'Shell optimization not complete')
         return False
@@ -812,14 +820,14 @@ def setup_center_opt(reaction_index, direction='forward'):
     reaction = autotst.reaction.Reaction(label=reaction_smiles)
 
     reaction.ts[direction][0].get_molecules()
-    try:
-        import hotbit
-        calc = hotbit.Hotbit()
-    except (ImportError, RuntimeError):
-        # if hotbit fails, use built-in lennard jones
-        import ase.calculators.lj
-        reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
-        calc = ase.calculators.lj.LennardJones()
+    #try:
+    import hotbit
+    calc = hotbit.Hotbit()
+    #except (ImportError, RuntimeError):
+    #    # if hotbit fails, use built-in lennard jones
+    #    import ase.calculators.lj
+    #    reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+    #    calc = ase.calculators.lj.LennardJones()
     reaction.generate_conformers(
         ase_calculator=calc,
         max_combos=1000,
@@ -833,14 +841,9 @@ def setup_center_opt(reaction_index, direction='forward'):
     # ------------ apply the geometry from the shell calculation
     for i in range(0, len(reaction.ts[direction])):
         shell_opt = os.path.join(shell_dir, f'{shell_label[:-8]}{i:04}.log')
-        try:
-            with open(shell_opt, 'r') as f:
-                atoms = ase.io.gaussian.read_gaussian_out(f)
-                reaction.ts[direction][i]._ase_molecule = atoms
-        except IndexError:
-            # handle case where all degrees of freedom were frozen in the shell calculation
-            if len(reaction.ts[direction][i]._ase_molecule) > 3:
-                raise ValueError('Shell optimization failed to converge. Rerun it!')
+        with open(shell_opt, 'r') as f:
+            atoms = ase.io.gaussian.read_gaussian_out(f)
+            reaction.ts[direction][i]._ase_molecule = atoms
 
         center_label = center_label[:-8] + f'{i:04}.log'
 
@@ -950,6 +953,12 @@ def run_center_opt(reaction_index, direction='forward'):
 
 
 if __name__ == '__main__':
+    #for idx in [419, 1814, 1287, 748, 370, 1103, 371]: 
+    for idx in [1288]: 
+        setup_center_opt(idx)
+        run_center_opt(idx)
+    
+    exit(0)
     top_reactions = [
         915, 749, 324, 419, 1814, 1287, 748, 1288, 370, 1103,
         371, 213, 420, 581, 464, 1289, 720, 722, 1658, 574, 725, 1736,
@@ -962,6 +971,9 @@ if __name__ == '__main__':
         screen_reaction_ts(reaction_index)
     else:
         for rxn in top_reactions:
+            # 324 has errors, 915 and 749 are just currently running
+            if rxn in [915, 749, 324]:
+                continue
             print('Screen reaction', rxn)
             screen_reaction_ts(rxn)
             run_shell_opt(rxn)
