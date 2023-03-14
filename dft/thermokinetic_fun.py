@@ -19,6 +19,7 @@ import cclib.io
 import autotst.species
 import autotst.reaction
 import autotst.calculator.gaussian
+import autotst.calculator.vibrational_analysis
 
 import ase.io.gaussian
 
@@ -378,7 +379,7 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.8, base_name='co
     n_conformers = len(glob.glob(os.path.join(base_dir, f'{base_name}*.com')))
     if n_conformers == 0:
         return False
-        #print(f'No conformers with basename {base_name} found in {base_dir}')
+        # print(f'No conformers with basename {base_name} found in {base_dir}')
     incomplete_indices = []
     good_runs = []
     finished_runs = []
@@ -396,7 +397,7 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.8, base_name='co
         else:
             # optimization didn't finish
             incomplete_indices.append(i)
-    #print(len(finished_runs) / float(n_conformers))
+    # print(len(finished_runs) / float(n_conformers))
     if len(finished_runs) / float(n_conformers) >= completion_threshold and len(good_runs) > 0:
         return True
     return False
@@ -1123,12 +1124,28 @@ def run_overall_opt(reaction_index, direction='forward'):
     os.chdir(start_dir)
 
 
+def check_vib_irc(gaussian_logfile):
+    """Function to check if the TS optimization was successful
+    """
+    reaction_smiles = reaction_index2smiles(reaction_index)
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)
+    va = autotst.calculator.vibrational_analysis.VibrationalAnalysis(
+        transitionstate=reaction.ts['forward'][0], log_file=gaussian_logfile
+    )
+    result = va.validate_ts()
+    if result:
+        print('TS is valid')
+    else:
+        print('TS is not valid')
+    return result
+
+
 if __name__ == '__main__':
-    #for idx in [419, 1814, 1287, 748, 370, 1103, 371]: 
+    # for idx in [419, 1814, 1287, 748, 370, 1103, 371]:
     for idx in [1288]: 
         setup_center_opt(idx)
         run_center_opt(idx)
-    
+
     exit(0)
     top_reactions = [
         915, 749, 324, 419, 1814, 1287, 748, 1288, 370, 1103,
