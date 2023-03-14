@@ -32,7 +32,7 @@ except KeyError:
 MAX_JOBS_RUNNING = 40
 
 
-def termination_status(log_file):
+def get_termination_status(log_file):
     """Analyze a Gaussian run by reading in reverse (allegedly faster than reading from start)
     Returns:
     0 for Normal termination
@@ -315,7 +315,7 @@ def optimize_conformers(species_index):
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
         if os.path.exists(conformer_logfile):
-            termination_status = termination_status(conformer_logfile)
+            termination_status = get_termination_status(conformer_logfile)
             if termination_status == 1 or termination_status == -1:
                 rerun_indices.append(i)
 
@@ -373,7 +373,7 @@ def optimize_conformers(species_index):
     os.chdir(start_dir)
 
 
-def conformers_done_optimizing(base_dir, completion_threshold=0.9, base_name='conformer_'):
+def conformers_done_optimizing(base_dir, completion_threshold=0.8, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     n_conformers = len(glob.glob(os.path.join(base_dir, f'{base_name}*.com')))
     if n_conformers == 0:
@@ -386,7 +386,7 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.9, base_name='co
         conformer_file = os.path.join(base_dir, f'{base_name}{i:04}.log')
         if not os.path.exists(conformer_file):
             return False
-        opt_status = termination_status(conformer_file)
+        opt_status = get_termination_status(conformer_file)
         if opt_status == 0:
             good_runs.append(i)
             finished_runs.append(i)
@@ -396,7 +396,8 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.9, base_name='co
         else:
             # optimization didn't finish
             incomplete_indices.append(i)
-    if len(finished_runs) / n_conformers >= completion_threshold and len(good_runs) > 0:
+    #print(len(finished_runs) / float(n_conformers))
+    if len(finished_runs) / float(n_conformers) >= completion_threshold and len(good_runs) > 0:
         return True
     return False
 
@@ -724,7 +725,7 @@ def run_shell_opt(reaction_index, direction='forward'):
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(shell_dir, f'{shell_label[:-8]}{i:04}.log')
         if os.path.exists(conformer_logfile):
-            termination_status = termination_status(conformer_logfile)
+            termination_status = get_termination_status(conformer_logfile)
             if termination_status == 1 or termination_status == -1:
                 rerun_indices.append(i)
 
@@ -898,7 +899,7 @@ def run_center_opt(reaction_index, direction='forward'):
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(center_dir, f'{center_label[:-8]}{i:04}.log')
         if os.path.exists(conformer_logfile):
-            termination_status = termination_status(conformer_logfile)
+            termination_status = get_termination_status(conformer_logfile)
             if termination_status == 1 or termination_status == -1:
                 rerun_indices.append(i)
 
@@ -1065,7 +1066,7 @@ def run_overall_opt(reaction_index, direction='forward'):
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(overall_dir, f'{overall_label[:-8]}{i:04}.log')
         if os.path.exists(conformer_logfile):
-            termination_status = termination_status(conformer_logfile)
+            termination_status = get_termination_status(conformer_logfile)
             if termination_status == 1 or termination_status == -1:
                 rerun_indices.append(i)
 
