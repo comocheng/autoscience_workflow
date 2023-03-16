@@ -896,6 +896,11 @@ def setup_arkane_reaction(reaction_index, direction='forward'):
         reaction_log(reaction_index, 'Arkane job already ran')
         return True
 
+    ## Check for overall job status completion
+    #if not get_reaction_status(reaction_index, 'overall_opt'):
+    #    reaction_log(reaction_index, 'Cannot run arkane until overall job is complete')
+    #    return False
+
     reaction_smiles = reaction_index2smiles(reaction_index)
     reaction_log(reaction_index, f'starting setup_arkane_reaction for reaction {reaction_index} {reaction_smiles}')
 
@@ -981,7 +986,10 @@ def setup_arkane_reaction(reaction_index, direction='forward'):
         species_name = get_sp_name(species_smiles)
         species_index = species_smiles2index(species_smiles)
         species_arkane_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'arkane')
-        species_file = os.path.join(f'species_{species_index:04}', os.path.basename(glob.glob(os.path.join(species_arkane_dir, 'conformer_*.py'))[0]))
+        try:
+            species_file = os.path.join(f'species_{species_index:04}', os.path.basename(glob.glob(os.path.join(species_arkane_dir, 'conformer_*.py'))[0]))
+        except IndexError:
+            raise IndexError(f'No species conformer file found in {species_arkane_dir}')        
 
         try:
             shutil.copytree(species_arkane_dir, os.path.join(arkane_dir, f'species_{species_index:04}'))
