@@ -1124,9 +1124,15 @@ def run_overall_opt(reaction_index, direction='forward'):
     os.chdir(start_dir)
 
 
-def check_vib_irc(gaussian_logfile):
+def check_vib_irc(reaction_index, gaussian_logfile):
     """Function to check if the TS optimization was successful
     """
+    # check for valid termination status
+    termination_status = get_termination_status(gaussian_logfile) 
+    if termination_status != 0:
+        print('logfile did not terminate normally')
+        return False   
+ 
     reaction_smiles = reaction_index2smiles(reaction_index)
     reaction = autotst.reaction.Reaction(label=reaction_smiles)
     va = autotst.calculator.vibrational_analysis.VibrationalAnalysis(
