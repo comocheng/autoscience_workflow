@@ -11,9 +11,6 @@ import job_manager
 
 import arkane.ess.gaussian  # does a lot better at reading gaussian files than ase
 
-# do I really need any of these?
-import shutil
-
 import cclib.io
 
 import autotst.species
@@ -22,6 +19,11 @@ import autotst.calculator.gaussian
 import autotst.calculator.vibrational_analysis
 
 import ase.io.gaussian
+
+# for arkane at end
+import rmgpy.chemkin
+import arkane.exceptions
+import shutil
 
 
 try:
@@ -101,6 +103,32 @@ def species_index2smiles(species_index):
     species_df = pd.read_csv(species_csv)
     species_index = species_df['SMILES'].values[species_index]
     return species_index
+
+
+def species_smiles2index(species_smiles):
+    """Function to return species index given a species smiles
+    looks up the results in the species_list.csv
+    """
+    species_csv = os.path.join(DFT_DIR, 'species_list.csv')
+    species_df = pd.read_csv(species_csv)
+    try:
+        species_index = species_df[species_df['SMILES'] == species_smiles]['i'].values[0]
+        return species_index
+    except IndexError:
+        import rmgpy.species
+        # now we need to check all the species for isomorphism
+        ref_sp = rmgpy.species.Species(smiles=species_smiles)
+        for i in range(0, len(species_df)):
+            sp = rmgpy.species.Species(smiles=species_df['SMILES'].values[i])
+            resonance = sp.generate_resonance_structures()
+            if resonance:
+                sp = resonance
+            else:
+                sp = [sp]
+            for compare_sp in sp:
+                if ref_sp.is_isomorphic(compare_sp):
+                    return i
+        print(f'could not identify species {species_smiles}')
 
 
 def reaction_index2smiles(reaction_index):
@@ -487,7 +515,6 @@ def get_rotor_info(conformer, torsion, torsion_index):
 
 def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors=False):
     # assume rotor and conformer logs have already been copied into the arkane directory
-    label = conformer.smiles
     species_name = os.path.basename(gauss_log[:-4])
     parser = cclib.io.ccread(gauss_log)
     symbol_dict = {
@@ -510,7 +537,6 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
 
     conformer._ase_molecule = ase.Atoms(atoms)
     conformer.update_coords_from("ase")
-    mol = conformer.rmg_molecule
     output = ['#!/usr/bin/env python',
               '# -*- coding: utf-8 -*-', ]
 
@@ -835,7 +861,7 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     """Function to check if the TS optimization was successful
     """
     # check for valid termination status
-    termination_status = get_termination_status(gaussian_logfile) 
+    termination_status = get_termination_status(gaussian_logfile)
     if termination_status != 0:
         print('logfile did not terminate normally')
         return False
@@ -851,6 +877,200 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     else:
         print('TS is not valid')
     return result
+
+
+def arkane_complete(reaction_index):
+    return os.path.exists(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}', 'arkane', 'RMG_libraries', 'reactions.py'))
+
+
+def setup_arkane_reaction(reaction_index, direction='forward'):
+    """Function to setup the arkane job for a reaction
+    """
+    # check if the arkane job was already completed
+    if get_reaction_status(reaction_index, 'arkane_calc'):
+        reaction_log(reaction_index, 'Arkane job already ran')
+        return True
+    elif arkane_complete(reaction_index):
+        set_reaction_status(reaction_index, 'arkane_setup', True)
+        set_reaction_status(reaction_index, 'arkane_calc', True)
+        reaction_log(reaction_index, 'Arkane job already ran')
+        return True
+
+    reaction_smiles = reaction_index2smiles(reaction_index)
+    reaction_log(reaction_index, f'starting setup_arkane_reaction for reaction {reaction_index} {reaction_smiles}')
+
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    overall_dir = os.path.join(reaction_dir, 'overall')
+    arkane_dir = os.path.join(reaction_dir, 'arkane')
+    os.makedirs(arkane_dir, exist_ok=True)
+
+    species_dict_file = "/work/westgroup/harris.se/autoscience/autoscience/butane/models/rmg_model/species_dictionary.txt"
+    species_dict = rmgpy.chemkin.load_species_dictionary(species_dict_file)
+
+    def get_sp_name(smiles):
+        if smiles == '[CH2]C=CC':  # manually change to resonance structures included in model
+            smiles = 'C=C[CH]C'
+        elif smiles == '[CH2][CH]C=C':
+            smiles = '[CH2]C=C[CH2]'
+        for entry in species_dict.keys():
+            if species_dict[entry].smiles == smiles:
+                return str(species_dict[entry])
+        # need to look for isomorphism
+        print(f'Failed to get species name for {smiles}')
+        return smiles
+
+    def get_reaction_label(rmg_reaction):
+        label = ''
+        for reactant in rmg_reaction.reactants:
+            label += get_sp_name(reactant.smiles) + ' + '
+        label = label[:-2]
+        label += '<=> '
+        for product in rmg_reaction.products:
+            label += get_sp_name(product.smiles) + ' + '
+        label = label[:-3]
+        return label
+
+    # Read in the reaction
+    reaction_smiles = reaction_index2smiles(reaction_index)
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)
+    reaction_log(reaction_index, f'Creating arkane files for reaction {reaction_index} {reaction.label}')
+    reaction.ts[direction][0].get_molecules()
+
+    # pick the lowest energy valid transition state:
+    TS_logs = glob.glob(os.path.join(overall_dir, f'fwd_ts_*.log'))
+    TS_log = ''
+    lowest_energy = 1e5
+    for logfile in TS_logs:
+        # skip if the TS is not valid
+        if not check_vib_irc(reaction_index, logfile):
+            continue
+
+        try:
+            g_reader = arkane.ess.gaussian.GaussianLog(logfile)
+            energy = g_reader.load_energy()
+            if energy < lowest_energy:
+                lowest_energy = energy
+                TS_log = logfile
+        except arkane.exceptions.LogError:
+            print(f'skipping bad logfile {logfile}')
+            continue
+
+    # -------------------- Write the input file ---------------------- #
+    model_chemistry = 'M06-2X/cc-pVTZ'
+    lines = [
+        f'modelChemistry = "{model_chemistry}"\n',
+        'useHinderedRotors = False\n',
+        'useBondCorrections = False\n\n',
+    ]
+
+    completed_species = []
+    for reactant in reaction.rmg_reaction.reactants + reaction.rmg_reaction.products:
+        # check for duplicates
+        duplicate = False
+        for sp in completed_species:
+            if reactant.is_isomorphic(sp):
+                duplicate = True
+        if duplicate:
+            continue
+
+        species_smiles = reactant.smiles
+        if species_smiles == '[CH2]C=CC':  # TODO clean up this fix where we manually switch back to other resonance structure
+            species_smiles = 'C=C[CH]C'
+        elif species_smiles == '[CH2][CH]C=C':
+            species_smiles = '[CH2]C=C[CH2]'
+        species_name = get_sp_name(species_smiles)
+        species_index = species_smiles2index(species_smiles)
+        species_arkane_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'arkane')
+        species_file = os.path.join(f'species_{species_index:04}', os.path.basename(glob.glob(os.path.join(species_arkane_dir, 'conformer_*.py'))[0]))
+
+        try:
+            shutil.copytree(species_arkane_dir, os.path.join(arkane_dir, f'species_{species_index:04}'))
+        except FileExistsError:
+            pass
+
+        # TODO - copy the species into the destination so the arkane calculation can be copied and redone elsewhere
+        lines.append(f'species("{species_name}", "{species_file}", structure=SMILES("{species_smiles}"))\n')
+        lines.append(f'thermo("{species_name}", "NASA")\n\n')
+
+        completed_species.append(reactant)
+
+    lines.append('\n')
+
+    TS_name = 'TS'
+    TS_file = 'TS.py'
+    TS_arkane_path = os.path.join(arkane_dir, TS_file)
+    shutil.copy(TS_log, arkane_dir)
+
+    lines.append(f'transitionState("{TS_name}", "{TS_file}")\n')
+
+    reaction_label = get_reaction_label(reaction.rmg_reaction)
+    reactants = [get_sp_name(reactant.smiles) for reactant in reaction.rmg_reaction.reactants]
+    products = [get_sp_name(product.smiles) for product in reaction.rmg_reaction.products]
+    lines.append(f'reaction(\n')
+    lines.append(f'    label = "{reaction_label}",\n')
+    lines.append(f'    reactants = {reactants},\n')
+    lines.append(f'    products = {products},\n')
+    lines.append(f'    transitionState = "{TS_name}",\n')
+    lines.append(f'#    tunneling = "Eckart",\n')
+    lines.append(f')\n\n')
+
+    lines.append(f'statmech("{TS_name}")\n')
+    lines.append(f'kinetics("{reaction_label}")\n\n')
+
+    # write the TS file
+    ts_lines = [
+        'energy = {"' + f'{model_chemistry}": Log("{os.path.basename(TS_log)}")' + '}\n\n',
+        'geometry = Log("' + f'{os.path.basename(TS_log)}")' + '\n\n',
+        'frequencies = Log("' + f'{os.path.basename(TS_log)}")' + '\n\n',
+    ]
+    with open(TS_arkane_path, 'w') as g:
+        g.writelines(ts_lines)
+
+    arkane_input_file = os.path.join(arkane_dir, 'input.py')
+    with open(arkane_input_file, 'w') as f:
+        f.writelines(lines)
+    # ----------------------------------------------------------------- #
+
+    # make the slurm script to run arkane
+    run_script = os.path.join(arkane_dir, 'run_arkane.sh')
+    with open(run_script, 'w') as f:
+        # Run on express
+        f.write('#!/bin/bash\n')
+        f.write('#SBATCH --partition=express,short,west\n')
+        f.write('#SBATCH --time=00:20:00\n\n')
+        f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
+
+    reaction_log(f'finished setting up arkane for reaction {reaction_index} {reaction_label}')
+    set_reaction_status(reaction_index, 'arkane_setup', True)
+
+
+def run_arkane_reaction(reaction_index, direction='forward'):
+    # Run the arkane job
+
+    # check if the arkane job was already completed
+    if get_reaction_status(reaction_index, 'arkane_calc'):
+        reaction_log(reaction_index, 'Arkane job already ran')
+        return True
+    elif arkane_complete(reaction_index):
+        set_reaction_status(reaction_index, 'arkane_setup', True)
+        set_reaction_status(reaction_index, 'arkane_calc', True)
+        reaction_log(reaction_index, 'Arkane job already ran')
+        return True
+    elif not get_reaction_status(reaction_index, 'arkane_setup'):
+        reaction_log(reaction_index, 'Arkane job not set up.')
+        return False
+
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    arkane_dir = os.path.join(reaction_dir, 'arkane')
+
+    # Run the arkane job
+    arkane_run_file = os.path.join(arkane_dir, 'run_arkane.sh')
+    start_dir = os.getcwd()
+    os.chdir(arkane_dir)
+    arkane_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {arkane_run_file}"
+    arkane_job.submit(slurm_cmd)
+    os.chdir(start_dir)
 
 
 if __name__ == '__main__':
