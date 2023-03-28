@@ -32,7 +32,8 @@ except KeyError:
     DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
     # DFT_DIR = "/home/moon/autoscience/reaction_calculator/dft"
 
-MAX_JOBS_RUNNING = 40
+#MAX_JOBS_RUNNING = 40
+MAX_JOBS_RUNNING = 50
 
 
 def get_termination_status(log_file):
@@ -407,7 +408,7 @@ def optimize_conformers(species_index):
     os.chdir(start_dir)
 
 
-def conformers_done_optimizing(base_dir, completion_threshold=0.8, base_name='conformer_'):
+def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     n_conformers = len(glob.glob(os.path.join(base_dir, f'{base_name}*.com')))
     if n_conformers == 0:
@@ -642,6 +643,36 @@ def setup_arkane_species(species_index, include_rotors=False):
         f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
 
 
+def run_arkane_species(species_index):
+    # Run the arkane job
+    
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    arkane_dir = os.path.join(species_dir, 'arkane')
+
+    if arkane_species_complete(species_index):
+        species_log(species_index, f'arkane already ran for species {species_index}')
+        return True
+
+    # Run the arkane job
+    arkane_run_file = os.path.join(arkane_dir, 'run_arkane.sh')
+    if not os.path.exists(arkane_run_file):
+        species_log(species_index, f'arkane run not set up for species {species_index}')
+        return False
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    start_dir = os.getcwd()
+    os.chdir(arkane_dir)
+    arkane_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {arkane_run_file}"
+    arkane_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
 def delete_double_spaces(gaussian_com_file):
     # Get rid of first double-linespace found,
     # usually between xyz and modredundant sections
@@ -659,7 +690,7 @@ def delete_double_spaces(gaussian_com_file):
             f.writelines(lines)
 
 
-def setup_opt(reaction_index, opt_type, direction='forward'):
+def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, max_conformers=100):
     """Function to set up the gaussian files for a particular opt type
     screens the conformers using hotbit, then writes the gaussian input files
     types are 'shell', 'center', 'overall'
@@ -672,6 +703,11 @@ def setup_opt(reaction_index, opt_type, direction='forward'):
     assert opt_type in ['shell', 'center', 'overall'], f'opt_type must be one of shell, center, overall. Got {opt_type}'
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
+    if not os.path.exists(reaction_dir):
+        os.makedirs(reaction_dir, exist_ok=True)
+    screen_dir = os.path.join(reaction_dir, 'screen')
+    if not os.path.exists(screen_dir):
+        os.makedirs(screen_dir, exist_ok=True)
     reaction_log(reaction_index, f'Starting {opt_type} opt job')
 
     # check if the opt setup is already complete
@@ -726,8 +762,8 @@ def setup_opt(reaction_index, opt_type, direction='forward'):
         calc = ase.calculators.lj.LennardJones()
     reaction.generate_conformers(
         ase_calculator=calc,
-        max_combos=1000,
-        max_conformers=100,
+        max_combos=max_combos,
+        max_conformers=max_conformers,
         save_results=True,
         results_dir=screen_dir,
     )
@@ -879,18 +915,18 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     return result
 
 
-def arkane_complete(reaction_index):
+def arkane_reaction_complete(reaction_index):
     return os.path.exists(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}', 'arkane', 'RMG_libraries', 'reactions.py'))
 
 
-def setup_arkane_reaction(reaction_index, direction='forward'):
+def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False):
     """Function to setup the arkane job for a reaction
     """
     # check if the arkane job was already completed
     if get_reaction_status(reaction_index, 'arkane_calc'):
         reaction_log(reaction_index, 'Arkane job already ran')
         return True
-    elif arkane_complete(reaction_index):
+    elif arkane_reaction_complete(reaction_index):
         set_reaction_status(reaction_index, 'arkane_setup', True)
         set_reaction_status(reaction_index, 'arkane_calc', True)
         reaction_log(reaction_index, 'Arkane job already ran')
@@ -947,8 +983,9 @@ def setup_arkane_reaction(reaction_index, direction='forward'):
     lowest_energy = 1e5
     for logfile in TS_logs:
         # skip if the TS is not valid
-        if not check_vib_irc(reaction_index, logfile):
-            continue
+        if not force_valid_ts:
+            if not check_vib_irc(reaction_index, logfile):
+                continue
 
         try:
             g_reader = arkane.ess.gaussian.GaussianLog(logfile)
@@ -959,6 +996,8 @@ def setup_arkane_reaction(reaction_index, direction='forward'):
         except arkane.exceptions.LogError:
             print(f'skipping bad logfile {logfile}')
             continue
+    if not TS_log:
+        raise ValueError('No Valid TS found')
 
     # -------------------- Write the input file ---------------------- #
     model_chemistry = 'M06-2X/cc-pVTZ'
@@ -1048,7 +1087,7 @@ def setup_arkane_reaction(reaction_index, direction='forward'):
         f.write('#SBATCH --time=00:20:00\n\n')
         f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
 
-    reaction_log(f'finished setting up arkane for reaction {reaction_index} {reaction_label}')
+    reaction_log(reaction_index, f'finished setting up arkane for reaction {reaction_index} {reaction_label}')
     set_reaction_status(reaction_index, 'arkane_setup', True)
 
 
@@ -1059,7 +1098,7 @@ def run_arkane_reaction(reaction_index, direction='forward'):
     if get_reaction_status(reaction_index, 'arkane_calc'):
         reaction_log(reaction_index, 'Arkane job already ran')
         return True
-    elif arkane_complete(reaction_index):
+    elif arkane_reaction_complete(reaction_index):
         set_reaction_status(reaction_index, 'arkane_setup', True)
         set_reaction_status(reaction_index, 'arkane_calc', True)
         reaction_log(reaction_index, 'Arkane job already ran')
@@ -1070,6 +1109,12 @@ def run_arkane_reaction(reaction_index, direction='forward'):
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
     arkane_dir = os.path.join(reaction_dir, 'arkane')
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
 
     # Run the arkane job
     arkane_run_file = os.path.join(arkane_dir, 'run_arkane.sh')
