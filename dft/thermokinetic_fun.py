@@ -479,6 +479,18 @@ def get_gaussian_file_energy(gaussian_log_file):
         return gl.load_energy()
 
 
+def get_gaussian_file_geometry(gaussian_log_file):
+    """Function to get the ase atoms object from a Gaussian .log file"""
+    with open(gaussian_log_file, 'r') as f:
+        # check that it's really a gaussian file
+        line = f.readline()
+        if 'Gaussian' not in line:
+            return None
+        f.seek(0)
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+        return atoms
+
+
 def get_lowest_energy_gaussian_file(base_dir):
     """Function to get the lowest energy gaussian .log file from a directory"""
     lowest_energy = 1e6
