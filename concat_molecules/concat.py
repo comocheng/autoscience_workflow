@@ -24,50 +24,37 @@ import ase.io.gaussian
 
 import sys
 DFT_DIR = '/home/moon/autoscience/reaction_calculator/dft'
+DFT_DIR = '/work/westgroup/harris.se/autoscience/reaction_calculator/dft'
 sys.path.append(DFT_DIR)
 import thermokinetic_fun
 
 
-from ase.visualize import view
+#import matplotlib.pyplot as plt
+#get_ipython().run_line_magic('matplotlib', 'inline')
 
-import matplotlib.pyplot as plt
-get_ipython().run_line_magic('matplotlib', 'inline')
-
-
-# In[2]:
 
 
 family = 'Disproportionation'
 
-
-# In[4]:
 
 
 reaction_index = 1766
 reaction_smiles = thermokinetic_fun.reaction_index2smiles(reaction_index)
 
 
-# In[7]:
-
 
 reaction = autotst.reaction.Reaction(label=reaction_smiles)
 reaction.ts['forward'][0].get_molecules()
 
-
-# In[14]:
 
 
 # confirm we're working with Disproportionation, otherwise this won't work
 assert reaction.reaction_family == family
 
 
-# In[21]:
-
 
 reaction.rmg_reaction
 
-
-# In[22]:
 
 
 # load the constituent species
@@ -75,28 +62,11 @@ r0 = reaction.rmg_reaction.reactants[0]
 r1 = reaction.rmg_reaction.reactants[1]
 
 
-# In[27]:
-
 
 r0_index = thermokinetic_fun.species_smiles2index(r0.smiles)
 r1_index = thermokinetic_fun.species_smiles2index(r1.smiles)
 
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
 # ## Get the labels on the reactants
-
-# In[38]:
 
 
 # load the Disproportionation family
@@ -138,19 +108,15 @@ kinetics_database.load(
     families=[family]
 )
 
-# load the entire database
+# load the entire database - I think this step tends to fail on discovery. Might have to generate com files on my laptop
 ref_db = rmgpy.data.rmg.RMGDatabase()
 ref_db.kinetics = kinetics_database
 ref_db.thermo = thermo_database
 
 
-# In[39]:
-
 
 templates = ref_db.kinetics.families[family].generate_reactions([r0.molecule[0], r1.molecule[0]], relabel_atoms=True)
 
-
-# In[45]:
 
 
 labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
@@ -159,8 +125,6 @@ labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_an
     relabel_atoms=True
 )
 
-
-# In[47]:
 
 
 # # rename to make sure molecule 0 has labels *2,*3,*4 and molecule 1 has *1
@@ -173,8 +137,6 @@ labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_an
 
 
 # ## rename to make sure molecule 0 has labels *2,*3,*4 and molecule 1 has *1
-
-# In[68]:
 
 
 try:
@@ -194,13 +156,7 @@ except ValueError:
     # TODO also switch out the rmg species objects...
 
 
-# In[ ]:
 
-
-
-
-
-# In[94]:
 
 
 # load the logfiles and get geometries
@@ -212,8 +168,6 @@ with open(r1_log, 'r') as f:
     r1_atoms = ase.io.gaussian.read_gaussian_out(f)
 
 
-# In[70]:
-
 
 atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label
 atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label
@@ -221,19 +175,9 @@ atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
 atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label
 
 
-# In[ ]:
-
-
-
-
-
-# In[79]:
-
 
 type(r0_atoms)
 
-
-# In[72]:
 
 
 print('*1\t', atom_1_index, r1_atoms[atom_1_index])
@@ -257,7 +201,6 @@ my_ts = r0_atoms
 # In[87]:
 
 
-view(my_ts, viewer='x3d')
 
 
 # ## translate molecule 1 to be X Angstroms away from atom 4 in the line of the 2-4 bond
@@ -392,76 +335,6 @@ ase_gaussian.write_input(ts_guess)
 
 # Get rid of double-space between xyz block and mod-redundant section
 thermokinetic_fun.delete_double_spaces('ase_systematic.com')
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[175]:
-
-
-# total = r0_atoms + r1_atoms
-
-
-# In[176]:
-
-
-# ase.io.write('translate_rotate.xyz', total)
-
-
-# In[177]:
-
-
-# reaction.ts['forward'][0].distance_data.distances
-
-
-# In[178]:
-
-
-# view(r0_atoms + r1_atoms, viewer='x3d')
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[13]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
 
 
 
