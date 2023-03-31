@@ -36,6 +36,8 @@ reaction_smiles = thermokinetic_fun.reaction_index2smiles(reaction_index)
 reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:04}')
 shell_dir = os.path.join(reaction_dir, 'shell')
 
+os.makedirs(shell_dir, exist_ok=True)
+
 reaction = autotst.reaction.Reaction(label=reaction_smiles)
 reaction.ts['forward'][0].get_molecules()
 
