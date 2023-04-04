@@ -35,6 +35,7 @@ reaction = autotst.reaction.Reaction(label=reaction_smiles)
 reaction.ts['forward'][0].get_molecules()
 
 # confirm we're working with Disproportionation, otherwise this won't work
+print('family', reaction.reaction_family)
 assert reaction.reaction_family in ['Disproportionation', 'H_Abstraction']
 family = reaction.reaction_family
 
@@ -88,11 +89,18 @@ ref_db.kinetics = kinetics_database
 ref_db.thermo = thermo_database
 
 # templates = ref_db.kinetics.families[family].generate_reactions([r0.molecule[0], r1.molecule[0]], relabel_atoms=True)
-labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
-    [r0.molecule[0], r1.molecule[0]],
-    [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
-    relabel_atoms=True
-)
+try:
+    labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+        [r0.molecule[0], r1.molecule[0]],
+        [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
+        relabel_atoms=True
+    )
+except AttributeError:
+    labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+        [r0, r1],
+        [reaction.rmg_reaction.products[0], reaction.rmg_reaction.products[1]],
+        relabel_atoms=True
+    )
 
 
 if family == 'Disproportionation':
