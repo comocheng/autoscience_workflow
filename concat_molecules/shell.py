@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[160]:
-
-
 import os
 import numpy as np
 import glob
@@ -29,7 +23,6 @@ sys.path.append(DFT_DIR)
 import thermokinetic_fun
 
 
-family = 'Disproportionation'
 # get reaction index from user
 reaction_index = int(sys.argv[1])
 reaction_smiles = thermokinetic_fun.reaction_index2smiles(reaction_index)
@@ -42,8 +35,8 @@ reaction = autotst.reaction.Reaction(label=reaction_smiles)
 reaction.ts['forward'][0].get_molecules()
 
 # confirm we're working with Disproportionation, otherwise this won't work
-assert reaction.reaction_family == family
-
+assert reaction.reaction_family in ['Disproportionation', 'H_Abstraction']
+family = reaction.reaction_family
 
 # load the constituent species
 r0 = reaction.rmg_reaction.reactants[0]
@@ -101,28 +94,41 @@ labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_an
     relabel_atoms=True
 )
 
-# # rename to make sure molecule 0 has labels *2,*3,*4 and molecule 1 has *1
-# if not labeled_r[0].is_isomorphic(r0.molecule[0]):
-#     print('wrong order, rearranging')
-#     temp0 = labeled_r[0]
-#     temp1 = labeled_r[1]
-#     labeled_r[0] = temp1
-#     labeled_r[1] = temp0
-# ## rename to make sure molecule 0 has labels *2,*3,*4 and molecule 1 has *1
-try:
-    labeled_r[1].get_labeled_atoms('*1')
-except ValueError:
-    print('wrong order, rearranging')
-    temp0 = labeled_r[0]
-    temp1 = labeled_r[1]
-    labeled_r[0] = temp1
-    labeled_r[1] = temp0
 
-    temp_index0 = r0_index
-    temp_index1 = r1_index
-    r0_index = temp_index1
-    r1_index = temp_index0
-    # TODO also switch out the rmg species objects...
+if family == 'Disproportionation':
+    # Make sure *2 *3 and *4 are on labeled_r[0] and *3 is on labeled_r[1]
+    try:
+        labeled_r[1].get_labeled_atoms('*1')
+    except ValueError:
+        print('wrong order, rearranging')
+        temp0 = labeled_r[0]
+        temp1 = labeled_r[1]
+        labeled_r[0] = temp1
+        labeled_r[1] = temp0
+
+        temp_index0 = r0_index
+        temp_index1 = r1_index
+        r0_index = temp_index1
+        r1_index = temp_index0
+        # TODO also switch out the rmg species objects...
+elif family == 'H_Abstraction':
+    # Make sure *1 and *2 are on labeled_r[0] and *3 is on labeled_r[1]
+    try:
+        labeled_r[0].get_labeled_atoms('*1')
+    except ValueError:
+        print('wrong order, rearranging')
+        temp0 = labeled_r[0]
+        temp1 = labeled_r[1]
+        labeled_r[0] = temp1
+        labeled_r[1] = temp0
+
+        temp_index0 = r0_index
+        temp_index1 = r1_index
+        r0_index = temp_index1
+        r1_index = temp_index0
+        # TODO also switch out the rmg species objects...
+else:
+    raise ValueError(f'family {family} not supported')
 
 
 # load the logfiles and get geometries
@@ -133,20 +139,34 @@ with open(r0_log, 'r') as f:
 with open(r1_log, 'r') as f:
     r1_atoms = ase.io.gaussian.read_gaussian_out(f)
 
-atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label
-atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label
-atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
-atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label
+if family == 'Disproportionation':
+    atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label  # H_notR group - steals H
+    atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H_R group
+    atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
+    atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label  # H atom
 
-# print('*1\t', atom_1_index, r1_atoms[atom_1_index])
-# print('*2\t', atom_2_index, r0_atoms[atom_2_index])
-# print('*4\t', atom_4_index, r0_atoms[atom_4_index])
+    H_atom_index = atom_4_index
+    H_R_index = atom_2_index
+    H_notR_index = atom_1_index
 
-reaction_core = ase.atoms.Atoms([r1_atoms[atom_1_index], r0_atoms[atom_2_index], r0_atoms[atom_4_index]])
+    H_distance_R = reaction.ts['forward'][0].distance_data.distances['d23']
+    d_new_bond = reaction.ts['forward'][0].distance_data.distances['d12']
 
-# keep molecule 0 in place
-my_ts = r0_atoms
+elif family == 'H_Abstraction':
+    atom_1_index = labeled_r[0].get_labeled_atoms('*1')[0].sorting_label  # H_R group
+    atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H atom
+    atom_3_index = labeled_r[1].get_labeled_atoms('*3')[0].sorting_label  # H_notR group - steals H
 
+    H_atom_index = atom_2_index
+    H_R_index = atom_1_index
+    H_notR_index = atom_3_index
+
+    H_distance_R = reaction.ts['forward'][0].distance_data.distances['d12']
+    d_new_bond = reaction.ts['forward'][0].distance_data.distances['d23']
+else:
+    raise NotImplementedError(f'family {family} not supported')
+
+reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0_atoms[H_atom_index]])
 
 # make a ray to extend from labeled atom *2 to *4
 # reload geometry fresh each time
@@ -154,25 +174,23 @@ with open(r0_log, 'r') as f:
     r0_atoms = ase.io.gaussian.read_gaussian_out(f)
 with open(r1_log, 'r') as f:
     r1_atoms = ase.io.gaussian.read_gaussian_out(f)
-ray = r0_atoms[atom_4_index].position - r0_atoms[atom_2_index].position
+
+ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
 ray /= np.linalg.norm(ray)  # normalize
 
-# move the Hydrogen (*4) to be d23 away from the other atom (*2)
-# d23 represents labels *2 - *4 from Disproportionation
-H_distance_2_4 = reaction.ts['forward'][0].distance_data.distances['d23']
-H_position = r0_atoms[atom_2_index].position + H_distance_2_4 * ray
-r0_atoms[atom_4_index].position = H_position
+# move the Hydrogen to be H_distance_R away from the other atom H-R
+H_position = r0_atoms[H_R_index].position + H_distance_R * ray
+r0_atoms[H_atom_index].position = H_position
 
 # translate molecule 1's (*1) to be d12 from the H(*4) on molecule 0
-d14 = reaction.ts['forward'][0].distance_data.distances['d12']
-a1_new_position = H_position + d14 * ray
-translation = a1_new_position - r1_atoms[atom_1_index].position
+a1_new_position = H_position + d_new_bond * ray
+translation = a1_new_position - r1_atoms[H_notR_index].position
 r1_atoms.translate(translation)
 
 # use law of cosines to get angle of rotation required to match distance data
-a = H_distance_2_4
-b = reaction.ts['forward'][0].distance_data.distances['d13']
-c = d14
+a = H_distance_R
+b = reaction.ts['forward'][0].distance_data.distances['d13']  # same for both Disproportionation and H_Abstraction
+c = d_new_bond
 assert b > a
 assert b > c
 angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
@@ -180,7 +198,7 @@ angle_deg = angle_rad * 180 / np.pi
 
 # rotate the entire molecule ~5 degrees
 # vector is arbitrary, but we can try experimenting with this to see what gets best results
-r1_atoms.rotate(angle_deg, v='x', center=r0_atoms[atom_4_index].position)
+r1_atoms.rotate(angle_deg, v='x', center=r0_atoms[H_atom_index].position)
 
 ase.io.write(os.path.join(shell_dir, 'm0.xyz'), r0_atoms)
 ase.io.write(os.path.join(shell_dir, 'm1.xyz'), r1_atoms)
@@ -210,13 +228,14 @@ ts_guess = m0 + m1
 ase.io.write(os.path.join(shell_dir, 'ts_guess.xyz'), ts_guess)
 
 # 1, 2, and 4 are the main reactants but 3 should be kept nearby?
-ind1 = len(m0) + atom_1_index
-ind2 = atom_2_index
-ind4 = atom_4_index
+ind1 = len(m0) + H_notR_index
+ind2 = H_R_index
+ind4 = H_atom_index
 
 combos = f"{(ind1 + 1)} {(ind2 + 1)} F\n"
 combos += f"{(ind2 + 1)} {(ind4 + 1)} F\n"
 combos += f"{(ind1 + 1)} {(ind2 + 1)} {(ind4 + 1)} F"
+
 
 # write the gaussian job
 ase_gaussian = ase.calculators.gaussian.Gaussian(
