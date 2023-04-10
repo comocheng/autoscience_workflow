@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import glob
+import copy
 import rmgpy.chemkin
 import rmgpy.species
 import rmgpy.reaction
@@ -23,7 +24,7 @@ sys.path.append(DFT_DIR)
 import thermokinetic_fun
 
 
-MAX_ENERGY = 0.0
+MAX_ENERGY = 1e5
 # get reaction index from user
 reaction_index = int(sys.argv[1])
 reaction_smiles = thermokinetic_fun.reaction_index2smiles(reaction_index)
@@ -179,13 +180,16 @@ reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0
 
 # do N random rotations
 N = 10
+M = 200  # how many total attempts to make
 np.random.seed(400)
-k = 0  # count successful configurations
-s = 0  # count attempts for one random rotation
-while k < N:
-    if s > 1000:
-        print('Max tries attempted')
-        break
+ts_energies = np.zeros(M)
+lowest_index_360_check = np.zeros(M)
+rand_angle_degs = np.random.uniform(0, 360, M)
+rot_vectors = np.random.uniform(-0.5, 0.5, (M, 3))
+# pick an arbitrary point to rotate around
+rot_center = r1_atoms[H_notR_index].position
+
+for k in range(M):
     # make a ray to extend from labeled atom *2 to *4
     # reload geometry fresh each time
     with open(r0_log, 'r') as f:
@@ -194,16 +198,8 @@ while k < N:
         r1_atoms = ase.io.gaussian.read_gaussian_out(f)
 
     # randomly rotate the r1 molecule
-    rand_angle_deg = np.random.uniform(0, 360)
-    if k % 3 == 0:
-        rot_vertex = 'x'
-    elif k % 3 == 1:
-        rot_vertex = 'y'
-    else:
-        rot_vertex = 'z'
-    # pick an arbitrary point to rotate around
-    rot_center = r1_atoms[H_notR_index].position
-    r1_atoms.rotate(rand_angle_deg, v=rot_vertex, center=rot_center)
+    # r1_atoms.rotate(rand_angle_degs[k], v=rot_vectors[k, :], center=rot_center)
+    r1_atoms.rotate(rand_angle_degs[k], v='y', center=rot_center)
 
     ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
     ray /= np.linalg.norm(ray)  # normalize
@@ -230,9 +226,6 @@ while k < N:
     # vector is arbitrary, but we can try experimenting with this to see what gets best results
     r1_atoms.rotate(angle_deg, v='x', center=r0_atoms[H_atom_index].position)
 
-    ase.io.write(os.path.join(shell_dir, f'm0_{k:04}.xyz'), r0_atoms)
-    ase.io.write(os.path.join(shell_dir, f'm1_{k:04}.xyz'), r1_atoms)
-
     # now rotate in 5 degree increments
     angles = np.arange(0, 360, 5)
     energies = np.zeros(len(angles))
@@ -240,8 +233,8 @@ while k < N:
     lowest_energy = MAX_ENERGY
     lowest_index = -1
     for i in range(0, len(angles)):
-        m0 = ase.io.read(os.path.join(shell_dir, f'm0_{k:04}.xyz'))
-        m1 = ase.io.read(os.path.join(shell_dir, f'm1_{k:04}.xyz'))
+        m0 = copy.deepcopy(r0_atoms)
+        m1 = copy.deepcopy(r1_atoms)
 
         m1.rotate(angles[i], v=ray, center=H_position)
         total = m0 + m1
@@ -250,16 +243,73 @@ while k < N:
         if energies[i] < lowest_energy:
             lowest_energy = energies[i]
             lowest_index = i
-    if lowest_energy == MAX_ENERGY:
-        print('skipping index', k)
-        s += 1
-        continue
 
-    m0 = ase.io.read(os.path.join(shell_dir, f'm0_{k:04}.xyz'))
-    m1 = ase.io.read(os.path.join(shell_dir, f'm1_{k:04}.xyz'))
-
+    # save each guess for debug purposes
+    m0 = copy.deepcopy(r0_atoms)
+    m1 = copy.deepcopy(r1_atoms)
     m1.rotate(angles[lowest_index], v=ray, center=H_position)
     ts_guess = m0 + m1
+    ase.io.write(os.path.join(shell_dir, f'guess_{k:04}.xyz'), ts_guess)
+
+    # record the energy of each index
+    ts_energies[k] = lowest_energy
+    lowest_index_360_check[k] = lowest_index
+
+# Get the N lowest energy conformers. This sorts lowest to highest
+order = np.arange(0, M)
+sorted_order = [x for _, x in sorted(zip(ts_energies, order))]
+for i in range(M):
+    print(sorted_order[i], ts_energies[sorted_order[i]])
+
+# reconstruct the top N ts guesses and save them
+for k in range(N):
+    rand_index = sorted_order[k]
+    # make a ray to extend from labeled atom *2 to *4
+    # reload geometry fresh each time
+    with open(r0_log, 'r') as f:
+        r0_atoms = ase.io.gaussian.read_gaussian_out(f)
+    with open(r1_log, 'r') as f:
+        r1_atoms = ase.io.gaussian.read_gaussian_out(f)
+
+    # rotate the r1 molecule according to the best random index
+    # r1_atoms.rotate(rand_angle_degs[rand_index], v=rot_vectors[rand_index, :], center=rot_center)
+    r1_atoms.rotate(rand_angle_degs[rand_index], v='y', center=rot_center)
+
+    ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
+    ray /= np.linalg.norm(ray)  # normalize
+
+    # move the Hydrogen to be H_distance_R away from the other atom H-R
+    H_position = r0_atoms[H_R_index].position + H_distance_R * ray
+    r0_atoms[H_atom_index].position = H_position
+
+    # translate molecule 1's (*1) to be d12 from the H(*4) on molecule 0
+    a1_new_position = H_position + d_new_bond * ray
+    translation = a1_new_position - r1_atoms[H_notR_index].position
+    r1_atoms.translate(translation)
+
+    # use law of cosines to get angle of rotation required to match distance data
+    a = H_distance_R
+    b = reaction.ts['forward'][0].distance_data.distances['d13']  # same for both Disproportionation and H_Abstraction
+    c = d_new_bond
+    assert b > a
+    assert b > c
+    angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
+    angle_deg = angle_rad * 180 / np.pi
+
+    # rotate the entire molecule ~5 degrees
+    # vector is arbitrary, but we can try experimenting with this to see what gets best results
+    r1_atoms.rotate(angle_deg, v='x', center=r0_atoms[H_atom_index].position)
+
+    # now rotate in 5 degree increments
+    angles = np.arange(0, 360, 5)
+    m0 = copy.deepcopy(r0_atoms)
+    m1 = copy.deepcopy(r1_atoms)
+    lowest_index = int(lowest_index_360_check[rand_index])
+    print('lowest index', lowest_index, type(lowest_index))
+    m1.rotate(angles[lowest_index], v=ray, center=H_position)
+    ts_guess = m0 + m1
+
+    # write the ts guess
     ase.io.write(os.path.join(shell_dir, f'ts_guess_{k:04}.xyz'), ts_guess)
 
     # 1, 2, and 4 are the main reactants but 3 should be kept nearby?
@@ -294,8 +344,6 @@ while k < N:
     # Get rid of double-space between xyz block and mod-redundant section
     thermokinetic_fun.delete_double_spaces(os.path.join(shell_dir, f'ase_systematic_{k:04}.com'))
 
-    k += 1
-    s = 0
 
 shell_slurm_file = os.path.join(shell_dir, 'run_shell.sh')
 lines = []
