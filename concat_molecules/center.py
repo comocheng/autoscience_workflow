@@ -112,82 +112,82 @@ elif family == 'H_Abstraction':
 else:
     raise ValueError(f'family {family} not supported')
 
+N = 10
+for k in range(N):
+    # load the geometries from the shell runs
+    shell_run = os.path.join(shell_dir, f'ase_systematic_{N:04}.log')
+    if not os.path.exists(shell_run):
+        print('no shell run found')
+        exit(1)
+    with open(shell_run, 'r') as f:
+        ts_guess = ase.io.gaussian.read_gaussian_out(f)
 
-# load the geometries from the shell runs
-shell_run = os.path.join(shell_dir, 'ase_systematic.log')
-if not os.path.exists(shell_run):
-    print('no shell run found')
-    exit(1)
-with open(shell_run, 'r') as f:
-    ts_guess = ase.io.gaussian.read_gaussian_out(f)
+    if family == 'Disproportionation':
+        atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label  # H_notR group - steals H
+        atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H_R group
+        atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
+        atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label  # H atom
 
-if family == 'Disproportionation':
-    atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label  # H_notR group - steals H
-    atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H_R group
-    atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
-    atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label  # H atom
+        H_atom_index = atom_4_index
+        H_R_index = atom_2_index
+        H_notR_index = atom_1_index
 
-    H_atom_index = atom_4_index
-    H_R_index = atom_2_index
-    H_notR_index = atom_1_index
+        H_distance_R = reaction.ts['forward'][0].distance_data.distances['d23']
+        d_new_bond = reaction.ts['forward'][0].distance_data.distances['d12']
 
-    H_distance_R = reaction.ts['forward'][0].distance_data.distances['d23']
-    d_new_bond = reaction.ts['forward'][0].distance_data.distances['d12']
+    elif family == 'H_Abstraction':
+        atom_1_index = labeled_r[0].get_labeled_atoms('*1')[0].sorting_label  # H_R group
+        atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H atom
+        atom_3_index = labeled_r[1].get_labeled_atoms('*3')[0].sorting_label  # H_notR group - steals H
 
-elif family == 'H_Abstraction':
-    atom_1_index = labeled_r[0].get_labeled_atoms('*1')[0].sorting_label  # H_R group
-    atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H atom
-    atom_3_index = labeled_r[1].get_labeled_atoms('*3')[0].sorting_label  # H_notR group - steals H
+        H_atom_index = atom_2_index
+        H_R_index = atom_1_index
+        H_notR_index = atom_3_index
 
-    H_atom_index = atom_2_index
-    H_R_index = atom_1_index
-    H_notR_index = atom_3_index
+        H_distance_R = reaction.ts['forward'][0].distance_data.distances['d12']
+        d_new_bond = reaction.ts['forward'][0].distance_data.distances['d23']
+    else:
+        raise NotImplementedError(f'family {family} not supported')
 
-    H_distance_R = reaction.ts['forward'][0].distance_data.distances['d12']
-    d_new_bond = reaction.ts['forward'][0].distance_data.distances['d23']
-else:
-    raise NotImplementedError(f'family {family} not supported')
+    # 1, 2, and 4 are the main reactants but 3 should be kept nearby?
+    ind1 = len(labeled_r[0].atoms) + H_notR_index
+    ind2 = H_R_index
+    ind4 = H_atom_index
 
+    indicies = []
+    for i in range(0, len(ts_guess)):
+        if i not in [ind1, ind2, ind4]:
+            indicies.append(i)
 
-# 1, 2, and 4 are the main reactants but 3 should be kept nearby?
-ind1 = len(labeled_r[0].atoms) + H_notR_index
-ind2 = H_R_index
-ind4 = H_atom_index
+    addsec = ""
+    for combo in list(itertools.combinations(indicies, 2)):
+        a, b = combo
+        addsec += f"{(a + 1)} {(b + 1)} F\n"
 
-indicies = []
-for i in range(0, len(ts_guess)):
-    if i not in [ind1, ind2, ind4]:
-        indicies.append(i)
+    reaction.ts['forward'][0].rmg_molecule.update_multiplicity()
 
-addsec = ""
-for combo in list(itertools.combinations(indicies, 2)):
-    a, b = combo
-    addsec += f"{(a + 1)} {(b + 1)} F\n"
+    # write the gaussian center job
+    ase_gaussian = ase.calculators.gaussian.Gaussian(
+        mem='5GB',
+        nprocshared=24,
+        label=f'ase_systematic_{k:04}',
+        scratch='.',
+        method="m062x",
+        basis="cc-pVTZ",
+        extra="Opt=(ts,calcfc,noeigentest,ModRedun,maxcycles=900) scf=(maxcycle=900)",
+        multiplicity=reaction.ts['forward'][0].rmg_molecule.multiplicity,
+        addsec=[addsec[:-1]]
+    )
 
-reaction.ts['forward'][0].rmg_molecule.update_multiplicity()
+    ase_gaussian.label = f'ase_systematic_{k:04}'
+    ase_gaussian.directory = center_dir
+    ase_gaussian.parameters.pop('scratch')
+    ase_gaussian.parameters.pop('multiplicity')
+    ase_gaussian.parameters['mult'] = reaction.ts['forward'][0].rmg_molecule.multiplicity
+    ase_gaussian.write_input(ts_guess)
 
-# write the gaussian center job
-ase_gaussian = ase.calculators.gaussian.Gaussian(
-    mem='5GB',
-    nprocshared=24,
-    label='ase_systematic',
-    scratch='.',
-    method="m062x",
-    basis="cc-pVTZ",
-    extra="Opt=(ts,calcfc,noeigentest,ModRedun,maxcycles=900) scf=(maxcycle=900)",
-    multiplicity=reaction.ts['forward'][0].rmg_molecule.multiplicity,
-    addsec=[addsec[:-1]]
-)
-
-ase_gaussian.label = 'ase_systematic'
-ase_gaussian.directory = center_dir
-ase_gaussian.parameters.pop('scratch')
-ase_gaussian.parameters.pop('multiplicity')
-ase_gaussian.parameters['mult'] = reaction.ts['forward'][0].rmg_molecule.multiplicity
-ase_gaussian.write_input(ts_guess)
-
-# Get rid of double-space between xyz block and mod-redundant section
-thermokinetic_fun.delete_double_spaces(os.path.join(center_dir, 'ase_systematic.com'))
+    # Get rid of double-space between xyz block and mod-redundant section
+    thermokinetic_fun.delete_double_spaces(os.path.join(center_dir, f'ase_systematic_{k:04}.com'))
 
 center_slurm_file = os.path.join(center_dir, 'run_center.sh')
 lines = []
@@ -199,13 +199,16 @@ lines.append('#SBATCH --partition=short\n')
 lines.append('#SBATCH --mem=20Gb\n')
 lines.append('#SBATCH --time=24:00:00\n')
 lines.append('#SBATCH --cpus-per-task=32\n')
+lines.append('#SBATCH --array=0-{N}\n')
 lines.append('\n\n')
 lines.append('export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n')
 lines.append('mkdir -p $GAUSS_SCRDIR\n')
 lines.append('module load gaussian/g16\n')
 lines.append('source /shared/centos7/gaussian/g16/bsd/g16.profile\n')
 lines.append('\n\n')
-lines.append('g16 ase_systematic.com\n')
+lines.append('RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n')
+lines.append('fname="ase_systematic_${RUN_i}.com"\n\n')
+lines.append('g16 $fname\n')
 
 with open(center_slurm_file, 'w') as f:
     f.writelines(lines)

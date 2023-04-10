@@ -176,97 +176,112 @@ else:
 
 reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0_atoms[H_atom_index]])
 
-# make a ray to extend from labeled atom *2 to *4
-# reload geometry fresh each time
-with open(r0_log, 'r') as f:
-    r0_atoms = ase.io.gaussian.read_gaussian_out(f)
-with open(r1_log, 'r') as f:
-    r1_atoms = ase.io.gaussian.read_gaussian_out(f)
+# do N random rotations
+N = 10
+np.random.seed(400)
+for k in range(N):
+    # make a ray to extend from labeled atom *2 to *4
+    # reload geometry fresh each time
+    with open(r0_log, 'r') as f:
+        r0_atoms = ase.io.gaussian.read_gaussian_out(f)
+    with open(r1_log, 'r') as f:
+        r1_atoms = ase.io.gaussian.read_gaussian_out(f)
 
-ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
-ray /= np.linalg.norm(ray)  # normalize
+    # randomly rotate the r1 molecule
+    rand_angle_deg = np.random.uniform(0, 360)
+    if N % 3 == 0:
+        rot_vertex = 'x'
+    elif N % 3 == 1:
+        rot_vertex = 'y'
+    else:
+        rot_vertex = 'z'
+    # pick an arbitrary point to rotate around
+    rot_center = r1_atoms[H_notR_index].position
+    r1_atoms.rotate(rand_angle_deg, v=rot_vertex, center=rot_center)
 
-# move the Hydrogen to be H_distance_R away from the other atom H-R
-H_position = r0_atoms[H_R_index].position + H_distance_R * ray
-r0_atoms[H_atom_index].position = H_position
+    ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
+    ray /= np.linalg.norm(ray)  # normalize
 
-# translate molecule 1's (*1) to be d12 from the H(*4) on molecule 0
-a1_new_position = H_position + d_new_bond * ray
-translation = a1_new_position - r1_atoms[H_notR_index].position
-r1_atoms.translate(translation)
+    # move the Hydrogen to be H_distance_R away from the other atom H-R
+    H_position = r0_atoms[H_R_index].position + H_distance_R * ray
+    r0_atoms[H_atom_index].position = H_position
 
-# use law of cosines to get angle of rotation required to match distance data
-a = H_distance_R
-b = reaction.ts['forward'][0].distance_data.distances['d13']  # same for both Disproportionation and H_Abstraction
-c = d_new_bond
-assert b > a
-assert b > c
-angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
-angle_deg = angle_rad * 180 / np.pi
+    # translate molecule 1's (*1) to be d12 from the H(*4) on molecule 0
+    a1_new_position = H_position + d_new_bond * ray
+    translation = a1_new_position - r1_atoms[H_notR_index].position
+    r1_atoms.translate(translation)
 
-# rotate the entire molecule ~5 degrees
-# vector is arbitrary, but we can try experimenting with this to see what gets best results
-r1_atoms.rotate(angle_deg, v='x', center=r0_atoms[H_atom_index].position)
+    # use law of cosines to get angle of rotation required to match distance data
+    a = H_distance_R
+    b = reaction.ts['forward'][0].distance_data.distances['d13']  # same for both Disproportionation and H_Abstraction
+    c = d_new_bond
+    assert b > a
+    assert b > c
+    angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
+    angle_deg = angle_rad * 180 / np.pi
 
-ase.io.write(os.path.join(shell_dir, 'm0.xyz'), r0_atoms)
-ase.io.write(os.path.join(shell_dir, 'm1.xyz'), r1_atoms)
+    # rotate the entire molecule ~5 degrees
+    # vector is arbitrary, but we can try experimenting with this to see what gets best results
+    r1_atoms.rotate(angle_deg, v='x', center=r0_atoms[H_atom_index].position)
 
-# now rotate in 5 degree increments
-angles = np.arange(0, 360, 5)
-energies = np.zeros(len(angles))
-lowest_energy = 1e5
-lowest_index = -1
-for i in range(0, len(angles)):
-    m0 = ase.io.read(os.path.join(shell_dir, 'm0.xyz'))
-    m1 = ase.io.read(os.path.join(shell_dir, 'm1.xyz'))
+    ase.io.write(os.path.join(shell_dir, f'm0_{k:04}.xyz'), r0_atoms)
+    ase.io.write(os.path.join(shell_dir, f'm1_{k:04}.xyz'), r1_atoms)
 
-    m1.rotate(angles[i], v=ray, center=H_position)
-    total = m0 + m1
-    total.calc = ase.calculators.lj.LennardJones()
-    energies[i] = total.get_potential_energy()
-    if energies[i] < lowest_energy:
-        lowest_energy = energies[i]
-        lowest_index = i
+    # now rotate in 5 degree increments
+    angles = np.arange(0, 360, 5)
+    energies = np.zeros(len(angles))
+    lowest_energy = 1e5
+    lowest_index = -1
+    for i in range(0, len(angles)):
+        m0 = ase.io.read(os.path.join(shell_dir, f'm0_{k:04}.xyz'))
+        m1 = ase.io.read(os.path.join(shell_dir, f'm1_{k:04}.xyz'))
 
-m0 = ase.io.read(os.path.join(shell_dir, 'm0.xyz'))
-m1 = ase.io.read(os.path.join(shell_dir, 'm1.xyz'))
+        m1.rotate(angles[i], v=ray, center=H_position)
+        total = m0 + m1
+        total.calc = ase.calculators.lj.LennardJones()
+        energies[i] = total.get_potential_energy()
+        if energies[i] < lowest_energy:
+            lowest_energy = energies[i]
+            lowest_index = i
 
-m1.rotate(angles[lowest_index], v=ray, center=H_position)
-ts_guess = m0 + m1
-ase.io.write(os.path.join(shell_dir, 'ts_guess.xyz'), ts_guess)
+    m0 = ase.io.read(os.path.join(shell_dir, f'm0_{k:04}.xyz'))
+    m1 = ase.io.read(os.path.join(shell_dir, f'm1_{k:04}.xyz'))
 
-# 1, 2, and 4 are the main reactants but 3 should be kept nearby?
-ind1 = len(m0) + H_notR_index
-ind2 = H_R_index
-ind4 = H_atom_index
+    m1.rotate(angles[lowest_index], v=ray, center=H_position)
+    ts_guess = m0 + m1
+    ase.io.write(os.path.join(shell_dir, f'ts_guess_{k:04}.xyz'), ts_guess)
 
-combos = f"{(ind1 + 1)} {(ind2 + 1)} F\n"
-combos += f"{(ind2 + 1)} {(ind4 + 1)} F\n"
-combos += f"{(ind1 + 1)} {(ind2 + 1)} {(ind4 + 1)} F"
+    # 1, 2, and 4 are the main reactants but 3 should be kept nearby?
+    ind1 = len(m0) + H_notR_index
+    ind2 = H_R_index
+    ind4 = H_atom_index
 
+    combos = f"{(ind1 + 1)} {(ind2 + 1)} F\n"
+    combos += f"{(ind2 + 1)} {(ind4 + 1)} F\n"
+    combos += f"{(ind1 + 1)} {(ind2 + 1)} {(ind4 + 1)} F"
 
-# write the gaussian job
-ase_gaussian = ase.calculators.gaussian.Gaussian(
-    mem='5GB',
-    nprocshared=24,
-    label='ase_systematic',
-    scratch='.',
-    method="m062x",
-    basis="cc-pVTZ",
-    extra="Opt=(ModRedun,Loose,maxcycles=900) Int(Grid=SG1) scf=(maxcycle=900)",
-    multiplicity=reaction.ts['forward'][0].rmg_molecule.multiplicity,
-    addsec=[combos]
-)
+    # write the gaussian job
+    ase_gaussian = ase.calculators.gaussian.Gaussian(
+        mem='5GB',
+        nprocshared=24,
+        label=f'ase_systematic_{k:04}',
+        scratch='.',
+        method="m062x",
+        basis="cc-pVTZ",
+        extra="Opt=(ModRedun,Loose,maxcycles=900) Int(Grid=SG1) scf=(maxcycle=900)",
+        multiplicity=reaction.ts['forward'][0].rmg_molecule.multiplicity,
+        addsec=[combos]
+    )
 
-ase_gaussian.label = 'ase_systematic'
-ase_gaussian.directory = shell_dir
-ase_gaussian.parameters.pop('scratch')
-ase_gaussian.parameters.pop('multiplicity')
-ase_gaussian.parameters['mult'] = reaction.ts['forward'][0].rmg_molecule.multiplicity
-ase_gaussian.write_input(ts_guess)
+    ase_gaussian.label = f'ase_systematic_{k:04}'
+    ase_gaussian.directory = shell_dir
+    ase_gaussian.parameters.pop('scratch')
+    ase_gaussian.parameters.pop('multiplicity')
+    ase_gaussian.parameters['mult'] = reaction.ts['forward'][0].rmg_molecule.multiplicity
+    ase_gaussian.write_input(ts_guess)
 
-# Get rid of double-space between xyz block and mod-redundant section
-thermokinetic_fun.delete_double_spaces(os.path.join(shell_dir, 'ase_systematic.com'))
+    # Get rid of double-space between xyz block and mod-redundant section
+    thermokinetic_fun.delete_double_spaces(os.path.join(shell_dir, f'ase_systematic_{k:04}.com'))
 
 shell_slurm_file = os.path.join(shell_dir, 'run_shell.sh')
 lines = []
@@ -278,13 +293,18 @@ lines.append('#SBATCH --partition=short\n')
 lines.append('#SBATCH --mem=20Gb\n')
 lines.append('#SBATCH --time=24:00:00\n')
 lines.append('#SBATCH --cpus-per-task=32\n')
+lines.append('#SBATCH --array=0-{N}\n')
+
 lines.append('\n\n')
 lines.append('export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n')
 lines.append('mkdir -p $GAUSS_SCRDIR\n')
 lines.append('module load gaussian/g16\n')
 lines.append('source /shared/centos7/gaussian/g16/bsd/g16.profile\n')
 lines.append('\n\n')
-lines.append('g16 ase_systematic.com\n')
+
+lines.append('RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n')
+lines.append('fname="ase_systematic_${RUN_i}.com"\n\n')
+lines.append('g16 $fname\n')
 
 with open(shell_slurm_file, 'w') as f:
     f.writelines(lines)
