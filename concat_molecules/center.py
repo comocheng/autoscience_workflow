@@ -25,7 +25,6 @@ sys.path.append(DFT_DIR)
 import thermokinetic_fun
 
 
-family = 'Disproportionation'
 # get reaction index from user
 reaction_index = int(sys.argv[1])
 reaction_smiles = thermokinetic_fun.reaction_index2smiles(reaction_index)
@@ -38,7 +37,8 @@ reaction = autotst.reaction.Reaction(label=reaction_smiles)
 reaction.ts['forward'][0].get_molecules()
 
 # confirm we're working with Disproportionation, otherwise this won't work
-assert reaction.reaction_family == family
+assert reaction.reaction_family in ['Disproportionation', 'H_Abstraction']
+family = reaction.reaction_family
 
 
 # load the constituent species
@@ -77,20 +77,41 @@ labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_an
     relabel_atoms=True
 )
 
-try:
-    labeled_r[1].get_labeled_atoms('*1')
-except ValueError:
-    print('wrong order, rearranging')
-    temp0 = labeled_r[0]
-    temp1 = labeled_r[1]
-    labeled_r[0] = temp1
-    labeled_r[1] = temp0
+if family == 'Disproportionation':
+    # Make sure *2 *3 and *4 are on labeled_r[0] and *3 is on labeled_r[1]
+    try:
+        labeled_r[1].get_labeled_atoms('*1')
+    except ValueError:
+        print('wrong order, rearranging')
+        temp0 = labeled_r[0]
+        temp1 = labeled_r[1]
+        labeled_r[0] = temp1
+        labeled_r[1] = temp0
 
-    temp_index0 = r0_index
-    temp_index1 = r1_index
-    r0_index = temp_index1
-    r1_index = temp_index0
-    # TODO also switch out the rmg species objects...
+        temp_index0 = r0_index
+        temp_index1 = r1_index
+        r0_index = temp_index1
+        r1_index = temp_index0
+        # TODO also switch out the rmg species objects...
+elif family == 'H_Abstraction':
+    # Make sure *1 and *2 are on labeled_r[0] and *3 is on labeled_r[1]
+    try:
+        labeled_r[0].get_labeled_atoms('*1')
+    except ValueError:
+        print('wrong order, rearranging')
+        temp0 = labeled_r[0]
+        temp1 = labeled_r[1]
+        labeled_r[0] = temp1
+        labeled_r[1] = temp0
+
+        temp_index0 = r0_index
+        temp_index1 = r1_index
+        r0_index = temp_index1
+        r1_index = temp_index0
+        # TODO also switch out the rmg species objects...
+else:
+    raise ValueError(f'family {family} not supported')
+
 
 # load the geometries from the shell runs
 shell_run = os.path.join(shell_dir, 'ase_systematic.log')
@@ -100,17 +121,38 @@ if not os.path.exists(shell_run):
 with open(shell_run, 'r') as f:
     ts_guess = ase.io.gaussian.read_gaussian_out(f)
 
+if family == 'Disproportionation':
+    atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label  # H_notR group - steals H
+    atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H_R group
+    atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
+    atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label  # H atom
 
-atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label
-atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label
-atom_3_index = labeled_r[0].get_labeled_atoms('*3')[0].sorting_label
-atom_4_index = labeled_r[0].get_labeled_atoms('*4')[0].sorting_label
+    H_atom_index = atom_4_index
+    H_R_index = atom_2_index
+    H_notR_index = atom_1_index
+
+    H_distance_R = reaction.ts['forward'][0].distance_data.distances['d23']
+    d_new_bond = reaction.ts['forward'][0].distance_data.distances['d12']
+
+elif family == 'H_Abstraction':
+    atom_1_index = labeled_r[0].get_labeled_atoms('*1')[0].sorting_label  # H_R group
+    atom_2_index = labeled_r[0].get_labeled_atoms('*2')[0].sorting_label  # H atom
+    atom_3_index = labeled_r[1].get_labeled_atoms('*3')[0].sorting_label  # H_notR group - steals H
+
+    H_atom_index = atom_2_index
+    H_R_index = atom_1_index
+    H_notR_index = atom_3_index
+
+    H_distance_R = reaction.ts['forward'][0].distance_data.distances['d12']
+    d_new_bond = reaction.ts['forward'][0].distance_data.distances['d23']
+else:
+    raise NotImplementedError(f'family {family} not supported')
 
 
 # 1, 2, and 4 are the main reactants but 3 should be kept nearby?
-ind1 = len(labeled_r[0].atoms) + atom_1_index
-ind2 = atom_2_index
-ind4 = atom_4_index
+ind1 = len(labeled_r[0].atoms) + H_notR_index
+ind2 = H_R_index
+ind4 = H_atom_index
 
 indicies = []
 for i in range(0, len(ts_guess)):
