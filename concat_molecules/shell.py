@@ -23,6 +23,7 @@ sys.path.append(DFT_DIR)
 import thermokinetic_fun
 
 
+MAX_ENERGY = 0.0
 # get reaction index from user
 reaction_index = int(sys.argv[1])
 reaction_smiles = thermokinetic_fun.reaction_index2smiles(reaction_index)
@@ -179,7 +180,12 @@ reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0
 # do N random rotations
 N = 10
 np.random.seed(400)
-for k in range(N):
+k = 0  # count successful configurations
+s = 0  # count attempts for one random rotation
+while k < N:
+    if s > 1000:
+        print('Max tries attempted')
+        break
     # make a ray to extend from labeled atom *2 to *4
     # reload geometry fresh each time
     with open(r0_log, 'r') as f:
@@ -189,9 +195,9 @@ for k in range(N):
 
     # randomly rotate the r1 molecule
     rand_angle_deg = np.random.uniform(0, 360)
-    if N % 3 == 0:
+    if k % 3 == 0:
         rot_vertex = 'x'
-    elif N % 3 == 1:
+    elif k % 3 == 1:
         rot_vertex = 'y'
     else:
         rot_vertex = 'z'
@@ -230,7 +236,8 @@ for k in range(N):
     # now rotate in 5 degree increments
     angles = np.arange(0, 360, 5)
     energies = np.zeros(len(angles))
-    lowest_energy = 1e5
+
+    lowest_energy = MAX_ENERGY
     lowest_index = -1
     for i in range(0, len(angles)):
         m0 = ase.io.read(os.path.join(shell_dir, f'm0_{k:04}.xyz'))
@@ -243,6 +250,10 @@ for k in range(N):
         if energies[i] < lowest_energy:
             lowest_energy = energies[i]
             lowest_index = i
+    if lowest_energy == MAX_ENERGY:
+        print('skipping index', k)
+        s += 1
+        continue
 
     m0 = ase.io.read(os.path.join(shell_dir, f'm0_{k:04}.xyz'))
     m1 = ase.io.read(os.path.join(shell_dir, f'm1_{k:04}.xyz'))
@@ -282,6 +293,9 @@ for k in range(N):
 
     # Get rid of double-space between xyz block and mod-redundant section
     thermokinetic_fun.delete_double_spaces(os.path.join(shell_dir, f'ase_systematic_{k:04}.com'))
+
+    k += 1
+    s = 0
 
 shell_slurm_file = os.path.join(shell_dir, 'run_shell.sh')
 lines = []
