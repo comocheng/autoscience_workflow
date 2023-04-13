@@ -180,7 +180,7 @@ reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0
 
 # do N random rotations
 N = 10
-M = 200  # how many total attempts to make
+M = 100  # how many total attempts to make
 np.random.seed(400)
 ts_energies = np.zeros(M)
 lowest_index_360_check = np.zeros(M)
@@ -198,8 +198,8 @@ for k in range(M):
         r1_atoms = ase.io.gaussian.read_gaussian_out(f)
 
     # randomly rotate the r1 molecule
-    # r1_atoms.rotate(rand_angle_degs[k], v=rot_vectors[k, :], center=rot_center)
-    r1_atoms.rotate(rand_angle_degs[k], v='y', center=rot_center)
+    r1_atoms.rotate(rand_angle_degs[k], v=rot_vectors[k, :], center=rot_center)
+    # r1_atoms.rotate(rand_angle_degs[k], v='y', center=rot_center)
 
     ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
     ray /= np.linalg.norm(ray)  # normalize
@@ -240,20 +240,28 @@ for k in range(M):
         total = m0 + m1
         total.calc = ase.calculators.lj.LennardJones()
         energies[i] = total.get_potential_energy()
-        if energies[i] < lowest_energy:
-            lowest_energy = energies[i]
-            lowest_index = i
+        # if energies[i] < lowest_energy:
+        #     lowest_energy = energies[i]
+        #     lowest_index = i
+
+    # pick the conformer opposite the worst overlap
+    max_energy_index = np.where(energies == np.max(energies))[0][0]
+    chosen_energy_index = max_energy_index - int(len(energies) / 2)
 
     # save each guess for debug purposes
     m0 = copy.deepcopy(r0_atoms)
     m1 = copy.deepcopy(r1_atoms)
     m1.rotate(angles[lowest_index], v=ray, center=H_position)
     ts_guess = m0 + m1
-    ase.io.write(os.path.join(shell_dir, f'guess_{k:04}.xyz'), ts_guess)
+    ts_guess.calc = ase.calculators.lj.LennardJones()
+    # ase.io.write(os.path.join(shell_dir, f'guess_{k:04}.xyz'), ts_guess)
 
     # record the energy of each index
-    ts_energies[k] = lowest_energy
-    lowest_index_360_check[k] = lowest_index
+    # ts_energies[k] = lowest_energy
+    # lowest_index_360_check[k] = lowest_index
+    lowest_index_360_check[k] = chosen_energy_index
+    ts_energies[k] = ts_guess.get_potential_energy()
+
 
 # Get the N lowest energy conformers. This sorts lowest to highest
 order = np.arange(0, M)
@@ -272,8 +280,8 @@ for k in range(N):
         r1_atoms = ase.io.gaussian.read_gaussian_out(f)
 
     # rotate the r1 molecule according to the best random index
-    # r1_atoms.rotate(rand_angle_degs[rand_index], v=rot_vectors[rand_index, :], center=rot_center)
-    r1_atoms.rotate(rand_angle_degs[rand_index], v='y', center=rot_center)
+    r1_atoms.rotate(rand_angle_degs[rand_index], v=rot_vectors[rand_index, :], center=rot_center)
+    # r1_atoms.rotate(rand_angle_degs[rand_index], v='y', center=rot_center)
 
     ray = r0_atoms[H_atom_index].position - r0_atoms[H_R_index].position
     ray /= np.linalg.norm(ray)  # normalize
@@ -355,7 +363,7 @@ lines.append('#SBATCH --partition=short\n')
 lines.append('#SBATCH --mem=20Gb\n')
 lines.append('#SBATCH --time=24:00:00\n')
 lines.append('#SBATCH --cpus-per-task=32\n')
-lines.append(f'#SBATCH --array=0-{N}\n')
+lines.append(f'#SBATCH --array=0-{N-1}' + '\n')
 
 lines.append('\n\n')
 lines.append('export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n')

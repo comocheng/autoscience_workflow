@@ -25,7 +25,7 @@ sys.path.append(DFT_DIR)
 import thermokinetic_fun
 
 
-use_center = True  # alterantive is to use the shell
+use_center = False  # False uses the shell, true uses the center
 
 # get reaction index from user
 reaction_index = int(sys.argv[1])
@@ -74,11 +74,25 @@ ref_db.kinetics = kinetics_database
 ref_db.thermo = thermo_database
 
 # templates = ref_db.kinetics.families[family].generate_reactions([r0.molecule[0], r1.molecule[0]], relabel_atoms=True)
-labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
-    [r0.molecule[0], r1.molecule[0]],
-    [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
-    relabel_atoms=True
-)
+# templates = ref_db.kinetics.families[family].generate_reactions([r0.molecule[0], r1.molecule[0]], relabel_atoms=True)
+try:
+    labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+        [r0.molecule[0], r1.molecule[0]],
+        [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
+        relabel_atoms=True
+    )
+except AttributeError:
+    labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+        [r0, r1],
+        [reaction.rmg_reaction.products[0], reaction.rmg_reaction.products[1]],
+        relabel_atoms=True
+    )
+
+#labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+#    [r0.molecule[0], r1.molecule[0]],
+#    [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
+#    relabel_atoms=True
+#)
 
 if family == 'Disproportionation':
     # Make sure *2 *3 and *4 are on labeled_r[0] and *3 is on labeled_r[1]

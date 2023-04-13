@@ -71,11 +71,25 @@ ref_db.kinetics = kinetics_database
 ref_db.thermo = thermo_database
 
 # templates = ref_db.kinetics.families[family].generate_reactions([r0.molecule[0], r1.molecule[0]], relabel_atoms=True)
-labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
-    [r0.molecule[0], r1.molecule[0]],
-    [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
-    relabel_atoms=True
-)
+# templates = ref_db.kinetics.families[family].generate_reactions([r0.molecule[0], r1.molecule[0]], relabel_atoms=True)
+try:
+    labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+        [r0.molecule[0], r1.molecule[0]],
+        [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
+        relabel_atoms=True
+    )
+except AttributeError:
+    labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+        [r0, r1],
+        [reaction.rmg_reaction.products[0], reaction.rmg_reaction.products[1]],
+        relabel_atoms=True
+    )
+
+#labeled_r, labeled_p = ref_db.kinetics.families[family].get_labeled_reactants_and_products(
+#    [r0.molecule[0], r1.molecule[0]],
+#    [reaction.rmg_reaction.products[0].molecule[0], reaction.rmg_reaction.products[1].molecule[0]],
+#    relabel_atoms=True
+#)
 
 if family == 'Disproportionation':
     # Make sure *2 *3 and *4 are on labeled_r[0] and *3 is on labeled_r[1]
@@ -115,7 +129,7 @@ else:
 N = 10
 for k in range(N):
     # load the geometries from the shell runs
-    shell_run = os.path.join(shell_dir, f'ase_systematic_{N:04}.log')
+    shell_run = os.path.join(shell_dir, f'ase_systematic_{k:04}.log')
     if not os.path.exists(shell_run):
         print('no shell run found')
         exit(1)
