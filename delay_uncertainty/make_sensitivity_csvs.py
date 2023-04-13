@@ -41,7 +41,7 @@ transport = os.path.join(working_dir, 'tran.dat')
 species_dict = os.path.join(working_dir, 'species_dictionary.txt')
 species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
 print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
-
+base_cti_path = os.path.join(working_dir, 'base.cti')
 perturbed_chemkin = os.path.join(working_dir, 'perturbed.inp')
 perturbed_cti_path = os.path.join(working_dir, 'perturbed.cti')
 
@@ -53,7 +53,6 @@ if os.path.exists(perturbed_cti_path):
 if not skip_create_perturb:
     # load the chemkin file and create a normal and perturbed cti for simulations:
     # # write base cantera
-    base_cti_path = os.path.join(working_dir, 'base.cti')
     subprocess.run(['ck2cti', f'--input={chemkin}', f'--transport={transport}', f'--output={base_cti_path}'])
 
     delta = 0.1
@@ -77,13 +76,16 @@ perturbed_gas = ct.Solution(perturbed_cti_path)
 
 # Take Reactor Conditions from Table 7 of supplementary info in
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
-def run_simulation(gas, T, P, X):
+def run_simulation(T, P, X):
     # function to run a RCM simulation
 
-    t_end = 1.0  # time in seconds
-    gas.TPX = T, P, X
+    # gas is a global object
 
-    reactor = ct.IdealGasReactor(gas)
+
+    t_end = 1.0  # time in seconds
+    base_gas.TPX = T, P, X
+
+    reactor = ct.IdealGasReactor(base_gas)
     reactor_net = ct.ReactorNet([reactor])
 
     times = [0]
@@ -98,14 +100,9 @@ def run_simulation(gas, T, P, X):
         P.append(reactor.thermo.P)
         X.append(reactor.thermo.X)
 
-    return (times, T, P, X)
-
-
-def get_ignition_delay(times, T, P, X, plot=False, title='', save=''):
-    # look for time with largest derivative
     slopes = np.gradient(P, times)
-    i = np.argmax(slopes)
-    return i, times[i]
+    delay_i = np.argmax(slopes)
+    return times[delay_i]
 
 
 # Load the experimental conditions
@@ -149,52 +146,73 @@ def same_reaction(rxn1, rxn2):
 
 
 # compute and save the delays
-delays = np.zeros(len(perturbed_gas.species()))
-# for j in range(0, len(concentrations)):  # get every condition index in that table
-for j in [7]:  # start with just confition 7
-    for i in range(0, len(perturbed_gas.species())):
-        print(f'perturbing {i} {perturbed_gas.species()[i]}')
-        # load the base gas
-        base_gas = ct.Solution(base_cti_path)
+species_delays = np.zeros((len(perturbed_gas.species()), len(concentrations)))
+reaction_delays = np.zeros((len(perturbed_gas.reactions()), len(concentrations)))
 
-        # run the simulations at condition #j
-        Xs = concentrations[j]
-        base_gas.modify_species(i, perturbed_gas.species()[i])
+for i in range(0, len(perturbed_gas.species())):
+    print(f'perturbing {i} {perturbed_gas.species()[i]}')
+    # load the base gas
+    base_gas = ct.Solution(base_cti_path)
 
-        t, T, P, X = run_simulation(base_gas, T7[j], P7[j], Xs)
-        index, delay_time = get_ignition_delay(t, T, P, X)
-        # print(delay_time)
-        delays[i] = delay_time
+    # run the simulations at condition #j
+    base_gas.modify_species(i, perturbed_gas.species()[i])
 
-    # save the result
-    np.save(os.path.join(working_dir, f'species_delays_{experimental_table_index:04}_{j:04}.npy'), delays)
+    # Run all simulations in parallel
+    delays = np.zeros(len(concentrations))
+    condition_indices = np.arange(0, len(concentrations))
 
-    for i in range(0, len(perturbed_gas.reactions())):
-        print(f'perturbing {i} {perturbed_gas.reactions()[i]}')
-        # TODO skip the ones that haven't actually been perturbed because PDEP or whatever
+    with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
+        for condition_index, delay_time in zip(condition_indices, executor.map(
+            run_simulation,
+            [T7[j] for j in condition_indices],
+            [P7[j] for j in condition_indices],
+            [concentrations[j] for j in condition_indices]
+        )):
+            delays[condition_index] = delay_time
+    species_delays[i, :] = delays
 
-        # load the base gas
-        base_gas = ct.Solution(base_cti_path)
+# save the result
+np.save(os.path.join(working_dir, f'species_delays_{experimental_table_index:04}.npy'), species_delays)
 
-        Xs = concentrations[j]
+for i in range(0, len(perturbed_gas.reactions())):
+    print(f'perturbing {i} {perturbed_gas.reactions()[i]}')
+    # TODO skip the ones that haven't actually been perturbed because PDEP or whatever
+    try:
+        a = base_gas.reactions()[i].rate
+    except AttributeError:
+        print(f'skipping reaction {i}: {base_gas.reactions()[i]} because it is not perturbed from the base mechanism')
+        continue
 
-        # order is not preserved between the mechanisms, so we have to find the reaction that matches
-        if same_reaction(perturbed_gas.reactions()[i], base_gas.reactions()[i]):
-            perturbed_index = i
+    # load the base gas
+    base_gas = ct.Solution(base_cti_path)
+    # order is not preserved between the mechanisms, so we have to find the reaction that matches
+    if same_reaction(perturbed_gas.reactions()[i], base_gas.reactions()[i]):
+        perturbed_index = i
+    else:
+        for k in range(0, len(base_gas.reactions())):
+            if same_reaction(perturbed_gas.reactions()[k], base_gas.reactions()[i]):
+                perturbed_index = k
+                break
         else:
-            for k in range(0, len(base_gas.reactions())):
-                if same_reaction(perturbed_gas.reactions()[k], base_gas.reactions()[i]):
-                    perturbed_index = k
-                    break
-            else:
-                raise ValueError('Could not find matching reaction in base mechanism')
+            raise ValueError('Could not find matching reaction in base mechanism')
 
-        base_gas.modify_reaction(i, perturbed_gas.reactions()[perturbed_index])
+    base_gas.modify_reaction(i, perturbed_gas.reactions()[perturbed_index])
 
-        t, T, P, X = run_simulation(base_gas, T7[j], P7[j], Xs)
-        index, delay_time = get_ignition_delay(t, T, P, X)
-        # print(delay_time)
-        delays[i] = delay_time
+    # Run all simulations in parallel
+    delays = np.zeros(len(concentrations))
+    condition_indices = np.arange(0, len(concentrations))
 
-    # save the result
-    np.save(os.path.join(working_dir, f'reaction_delays_{experimental_table_index:04}_{j:04}.npy'), delays)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
+        for condition_index, delay_time in zip(condition_indices, executor.map(
+            run_simulation,
+            [T7[j] for j in condition_indices],
+            [P7[j] for j in condition_indices],
+            [concentrations[j] for j in condition_indices]
+        )):
+            delays[condition_index] = delay_time
+    reaction_delays[i, :] = delays
+    if i % 100 == 0:
+        np.save(os.path.join(working_dir, f'reaction_delays_{experimental_table_index:04}.npy'), reaction_delays)
+
+# save the result
+np.save(os.path.join(working_dir, f'reaction_delays_{experimental_table_index:04}.npy'), reaction_delays)
