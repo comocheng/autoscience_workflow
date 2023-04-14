@@ -134,7 +134,11 @@ for k in range(N):
         print('no shell run found')
         exit(1)
     with open(shell_run, 'r') as f:
-        ts_guess = ase.io.gaussian.read_gaussian_out(f)
+        try:
+            ts_guess = ase.io.gaussian.read_gaussian_out(f)
+        except IndexError:
+            print(f'skipping bad gaussian file {f}')
+            continue
 
     if family == 'Disproportionation':
         atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label  # H_notR group - steals H

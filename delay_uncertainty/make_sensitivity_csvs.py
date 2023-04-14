@@ -36,6 +36,7 @@ def perturb_reaction(rxn, delta):
 
 
 chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
+chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
 working_dir = os.path.dirname(chemkin)
 transport = os.path.join(working_dir, 'tran.dat')
 species_dict = os.path.join(working_dir, 'species_dictionary.txt')
@@ -80,8 +81,6 @@ def run_simulation(T, P, X):
     # function to run a RCM simulation
 
     # gas is a global object
-
-
     t_end = 1.0  # time in seconds
     base_gas.TPX = T, P, X
 
@@ -107,7 +106,7 @@ def run_simulation(T, P, X):
 
 # Load the experimental conditions
 ignition_delay_data = '/work/westgroup/harris.se/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
-ignition_delay_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
+# ignition_delay_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
 df_exp = pd.read_csv(ignition_delay_data)
 
 # slice just table 7, where phi=1.0

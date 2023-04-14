@@ -26,6 +26,11 @@ import thermokinetic_fun
 
 
 use_center = False  # False uses the shell, true uses the center
+# use_center = False  # False uses the shell, true uses the center
+if len(sys.argv) > 2:
+    if sys.argv[2] == '--use_center=True' or sys.argv[2] == '--use_center':
+        use_center = True
+
 
 # get reaction index from user
 reaction_index = int(sys.argv[1])
@@ -138,14 +143,22 @@ for k in range(N):
             print('no center run found')
             exit(1)
         with open(center_run, 'r') as f:
-            ts_guess = ase.io.gaussian.read_gaussian_out(f)
+            try:
+                ts_guess = ase.io.gaussian.read_gaussian_out(f)
+            except IndexError:
+                print(f'skipping bad gaussian file {f}')
+                continue
     else:  # use shell
         shell_run = os.path.join(shell_dir, f'ase_systematic_{k:04}.log')
         if not os.path.exists(shell_run):
             print('no shell run found')
             exit(1)
         with open(shell_run, 'r') as f:
-            ts_guess = ase.io.gaussian.read_gaussian_out(f)
+            try:
+                ts_guess = ase.io.gaussian.read_gaussian_out(f)
+            except IndexError:
+                print(f'skipping bad gaussian file {f}')
+                continue
 
     if family == 'Disproportionation':
         atom_1_index = labeled_r[1].get_labeled_atoms('*1')[0].sorting_label  # H_notR group - steals H
