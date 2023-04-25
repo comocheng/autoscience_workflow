@@ -276,7 +276,7 @@ def run_flame_speed(condition_index):
     flame = ct.FreeFlame(gas, width=width)
     flame.flame.set_steady_tolerances(default=tol_ss)   # set tolerances
     flame.flame.set_transient_tolerances(default=tol_ts)
-    flame.set_refine_criteria(ratio=5, slope=0.25, curve=0.27)  # decrease this
+    flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01)  # decrease this
     # flame.max_time_step_count = 5000
     flame.max_time_step_count = 900
     loglevel = 1
@@ -295,7 +295,7 @@ def run_flame_speed(condition_index):
 
     else:
         print('Initial flame conditions not found, using default')
-        # raise OSError
+        raise OSError
 
     if analyze_convergence:
         callback, speeds, grids = make_callback(flame)
@@ -345,7 +345,6 @@ for i in range(0, len(temperatures)):
         'X': concentrations[i],
     }, ignore_index=True)
 results_df.to_csv(os.path.join(save_dir, 'flame_speed_results.csv'))
-
 
 out_df = pd.DataFrame(flame_speeds)
 # out_df.to_csv('aramco_flame_speeds.csv')
