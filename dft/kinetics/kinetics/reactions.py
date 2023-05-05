@@ -440,6 +440,14 @@ entry(
 )
 
 entry(
+    index = 1288,
+    label = "C3H6O3(73) + PC4H9(182) <=> C3H5O3(72) + butane(1)",
+    degeneracy = 1.0,
+    elementary_high_p = True,
+    kinetics = Arrhenius(A=(0.622075,'cm^3/(mol*s)'), n=3.234, Ea=(8.42671,'kJ/mol'), T0=(1,'K'), Tmin=(298,'K'), Tmax=(2500,'K'), comment="""Fitted to 50 data points; dA = *|/ 1.14673, dn = +|- 0.017988, dEa = +|- 0.09789 kJ/mol"""),
+)
+
+entry(
     index = 1289,
     label = "C3H6O3(73) + SC4H9(183) <=> S(911) + butane(1)",
     degeneracy = 1.0,
