@@ -17,10 +17,10 @@ experimental_table_index = int(sys.argv[2])
 
 working_dir = os.path.join(os.path.dirname(chemkin))
 
-transport = os.path.join(working_dir, 'tran.dat')
-species_dict = os.path.join(working_dir, 'species_dictionary.txt')
-species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
-print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
+# transport = os.path.join(working_dir, 'tran.dat')
+# species_dict = os.path.join(working_dir, 'species_dictionary.txt')
+# species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
+# print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
 base_cti_path = os.path.join(working_dir, 'base.cti')
 
 assert os.path.exists(base_cti_path)
@@ -78,11 +78,41 @@ phi7 = table_exp['phi'].values  # equivalence ratios
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
 concentrations = []
 # for phi = 1
-x_diluent = 0.7649
-conc_dict = {
-    'O2(2)': 0.2038,
-    'butane(1)': 0.03135
-}
+
+if phi7[0] == 0.3:
+    x_diluent = 0.7821
+    conc_dict = {
+        'O2(2)': 0.2083,
+        'butane(1)': 0.00962
+    }
+elif phi7[0] == 0.5:
+    x_diluent = 0.7771
+    conc_dict = {
+        'O2(2)': 0.2070,
+        'butane(1)': 0.01595
+    }
+elif phi7[0] == 1.0:
+    x_diluent = 0.7649
+    conc_dict = {
+        'O2(2)': 0.2038,
+        'butane(1)': 0.03135
+    }
+elif phi7[0] == 2.0:
+    x_diluent = 0.7416
+    conc_dict = {
+        'O2(2)': 0.1976,
+        'butane(1)': 0.06079
+    }
+else:
+    raise ValueError
+
+if 'aramco' in chemkin.lower():
+    o2_conc = conc_dict.pop('O2(2)')
+    conc_dict['O2'] = o2_conc
+
+    butane_conc = conc_dict.pop('butane(1)')
+    conc_dict['C4H10'] = butane_conc
+
 
 for i in range(0, len(table_exp)):
     x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
@@ -90,7 +120,10 @@ for i in range(0, len(table_exp)):
     x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
     conc_dict['N2'] = x_N2
     conc_dict['Ar'] = x_Ar
-    conc_dict['CO2(7)'] = x_CO2
+    if 'aramco' in chemkin.lower():
+        conc_dict['CO2'] = x_CO2
+    else:
+        conc_dict['CO2(7)'] = x_CO2
     concentrations.append(conc_dict)
 
 # just use the first concentration

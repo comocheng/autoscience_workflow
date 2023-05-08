@@ -130,12 +130,32 @@ phi7 = table_exp['phi'].values  # equivalence ratios
 # Mixture compositions taken from table 2 of
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
 concentrations = []
-# for phi = 1
-x_diluent = 0.7649
-conc_dict = {
-    'O2(2)': 0.2038,
-    'butane(1)': 0.03135
-}
+if phi7[0] == 0.3:
+    x_diluent = 0.7821
+    conc_dict = {
+        'O2(2)': 0.2083,
+        'butane(1)': 0.00962
+    }
+elif phi7[0] == 0.5:
+    x_diluent = 0.7771
+    conc_dict = {
+        'O2(2)': 0.2070,
+        'butane(1)': 0.01595
+    }
+elif phi7[0] == 1.0:
+    x_diluent = 0.7649
+    conc_dict = {
+        'O2(2)': 0.2038,
+        'butane(1)': 0.03135
+    }
+elif phi7[0] == 2.0:
+    x_diluent = 0.7416
+    conc_dict = {
+        'O2(2)': 0.1976,
+        'butane(1)': 0.06079
+    }
+else:
+    raise ValueError
 
 for i in range(0, len(table_exp)):
     x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
