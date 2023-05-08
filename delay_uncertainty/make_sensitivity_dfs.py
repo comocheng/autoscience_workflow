@@ -9,10 +9,16 @@ import subprocess
 
 
 # get the table index from input for easy parallelization
-experimental_table_index = int(sys.argv[1])
 
-chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
+chemkin = sys.argv[1]
+
+experimental_table_index = int(sys.argv[2])
+
+# # chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
 # chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
+# # chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/improved_model/cutoff3_20230418.inp'
+# chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_rmg_1week/chem_annotated.inp'
+
 working_dir = os.path.join(os.path.dirname(chemkin))
 
 
@@ -89,7 +95,12 @@ def run_simulation(T, P, X):
     P = [reactor.thermo.P]
     X = [reactor.thermo.X]  # mol fractions
     while reactor_net.time < t_end:
-        reactor_net.step()
+        try:
+            reactor_net.step()
+        except ct._cantera.CanteraError:
+            print('Reactor failed to solve!')
+            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            return 0
 
         times.append(reactor_net.time)
         T.append(reactor.T)
@@ -132,8 +143,8 @@ for i in range(0, len(table_exp)):
     concentrations.append(conc_dict)
 
 # just use the first concentration
-Tmax = np.max(T7)
-Tmin = np.min(T7)
+Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
+Tmin = 663
 N = 51
 temperatures = np.linspace(Tmin, Tmax, N)
 
@@ -175,12 +186,16 @@ for i in range(0, len(perturbed_gas.species())):
 # save the result as a pandas dataframe
 table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
 os.makedirs(table_dir, exist_ok=True)
-spec_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
-for i in range(0, len(temperatures)):
-    spec_df = spec_df.append({'T': temperatures[i], 'P': P7[0], 'delay(ms)': delays[i], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
-spec_df.to_csv(os.path.join(table_dir, f'species_delays_{experimental_table_index:04}.csv'))
+np.save(os.path.join(table_dir, f'species_delays_{experimental_table_index:04}.npy'), species_delays)
 
 
+# spec_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
+# for i in range(0, len(temperatures)):
+#     spec_df = spec_df.append({'T': temperatures[i], 'P': P7[0], 'delay(ms)': delays[i], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
+# spec_df.to_csv(os.path.join(table_dir, f'species_delays_{experimental_table_index:04}.csv'))
+
+
+# rxn_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
 for i in range(0, len(perturbed_gas.reactions())):
     print(f'perturbing {i} {perturbed_gas.reactions()[i]}')
     # TODO skip the ones that haven't actually been perturbed because PDEP or whatever
@@ -218,15 +233,17 @@ for i in range(0, len(perturbed_gas.reactions())):
         )):
             delays[condition_index] = delay_time
     reaction_delays[i, :] = delays
-    if i % 100 == 0:
-        # save the result as a pandas dataframe
-        rxn_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
-        for k in range(0, len(temperatures)):
-            rxn_df = rxn_df.append({'T': temperatures[k], 'P': P7[0], 'delay(ms)': delays[k], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
-        rxn_df.to_csv(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.csv'))
 
-# save the result as a pandas dataframe
-rxn_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
-for k in range(0, len(temperatures)):
-    rxn_df = rxn_df.append({'T': temperatures[k], 'P': P7[0], 'delay(ms)': delays[k], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
-rxn_df.to_csv(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.csv'))
+# save the result as a numpy thing
+np.save(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.npy'), reaction_delays)
+
+#     # append the results to the pandas dataframe
+#     for k in range(0, len(reaction_delays)):
+#         rxn_df = rxn_df.append({'T': temperatures[k], 'P': P7[0], 'delay(ms)': reaction_delays[k], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
+#     rxn_df.to_csv(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.csv'))
+
+# # save the result as a pandas dataframe
+
+# for k in range(0, len(temperatures)):
+#     rxn_df = rxn_df.append({'T': temperatures[k], 'P': P7[0], 'delay(ms)': reaction_delays[k], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
+# rxn_df.to_csv(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.csv'))

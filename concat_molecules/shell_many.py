@@ -180,7 +180,7 @@ reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0
 
 # do N random rotations
 N = 100
-M = 200  # how many total attempts to make
+M = 500  # how many total attempts to make
 np.random.seed(400)
 ts_energies = np.zeros(M)
 lowest_index_360_check = np.zeros(M)
@@ -191,7 +191,7 @@ rot_center = r1_atoms[H_notR_index].position
 
 modify_distances = True
 if modify_distances:
-    distance_mods = np.random.uniform(0.8, 1.2, (M, 3))
+    distance_mods = np.random.uniform(0.9, 1.1, (M, 3))
 else:
     distance_mods = np.ones((M, 3))
 
@@ -225,11 +225,22 @@ for k in range(M):
 
     # use law of cosines to get angle of rotation required to match distance data
     a = H_distance_R * distance_mods[k, 0]
-    b = reaction.ts['forward'][0].distance_data.distances['d13'] * distance_mods[k, 1] # same for both Disproportionation and H_Abstraction
+    b = reaction.ts['forward'][0].distance_data.distances['d13']  # * distance_mods[k, 1]  # same for both Disproportionation and H_Abstraction
     c = d_new_bond * distance_mods[k, 2]
-    assert b > a
-    assert b > c
-    angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
+    # assert b > a
+    # assert b > c
+    ratio = (c * c - a * a - b * b) / (-2 * a * b)
+
+    if ratio > 1.0 or ratio < -1.0:
+        print('invalid input')
+        continue
+    try:
+        angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
+        if np.isnan(angle_rad):
+            continue
+    except RuntimeWarning:
+        print('invalid angle')
+        continue
     angle_deg = angle_rad * 180 / np.pi
 
     # rotate the entire molecule ~5 degrees
@@ -276,8 +287,8 @@ for k in range(M):
 # Get the N lowest energy conformers. This sorts lowest to highest
 order = np.arange(0, M)
 sorted_order = [x for _, x in sorted(zip(ts_energies, order))]
-for i in range(M):
-    print(sorted_order[i], ts_energies[sorted_order[i]])
+# for i in range(M):
+#     print(sorted_order[i], ts_energies[sorted_order[i]])
 
 # reconstruct the top N ts guesses and save them
 for k in range(N):
@@ -297,7 +308,7 @@ for k in range(N):
     ray /= np.linalg.norm(ray)  # normalize
 
     # move the Hydrogen to be H_distance_R away from the other atom H-R
-    H_position = r0_atoms[H_R_index].position + (H_distance_R distance_mods[k, 0]) * ray
+    H_position = r0_atoms[H_R_index].position + (H_distance_R * distance_mods[k, 0]) * ray
     r0_atoms[H_atom_index].position = H_position
 
     # translate molecule 1's (*1) to be d12 from the H(*4) on molecule 0
@@ -308,7 +319,8 @@ for k in range(N):
     # use law of cosines to get angle of rotation required to match distance data
     a = H_distance_R * distance_mods[k, 0]
     b = reaction.ts['forward'][0].distance_data.distances['d13'] * distance_mods[k, 1] # same for both Disproportionation and H_Abstraction
-    c = d_new_bond * distance_modes[k, 2]
+    c = d_new_bond * distance_mods[k, 2]
+    
     assert b > a
     assert b > c
     angle_rad = np.arccos((c * c - a * a - b * b) / (-2 * a * b))
@@ -323,7 +335,7 @@ for k in range(N):
     m0 = copy.deepcopy(r0_atoms)
     m1 = copy.deepcopy(r1_atoms)
     lowest_index = int(lowest_index_360_check[rand_index])
-    print('lowest index', lowest_index, type(lowest_index))
+    # print('lowest index', lowest_index, type(lowest_index))
     m1.rotate(angles[lowest_index], v=ray, center=H_position)
     ts_guess = m0 + m1
 

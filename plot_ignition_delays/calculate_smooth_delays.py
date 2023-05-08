@@ -8,9 +8,6 @@ import pandas as pd
 import concurrent.futures
 
 
-import matplotlib.pyplot as plt
-
-
 def get_delay(gas, T, P, X):
     # function to run a RCM simulation
 
@@ -50,6 +47,9 @@ base_rmg_path = '/home/moon/autoscience/autoscience/butane/models/rmg_model/chem
 aramco_path = '/home/moon/autoscience/autoscience/butane/models/aramco/AramcoMech3.0.cti'
 improved_rmg_path = '/home/moon/autoscience/autoscience/butane/models/modifications/cutoff3_20230418.cti'
 
+base_rmg_path = '/work/westgroup/harris.se/autoscience/autoscience/butane/models/rmg_model/chem_annotated.cti'  # base RMG
+aramco_path = '/work/westgroup/harris.se/autoscience/autoscience/butane/models/aramco/AramcoMech3.0.cti'
+improved_rmg_path = '/work/westgroup/harris.se/autoscience/autoscience/butane/models/modifications/cutoff3_20230418.cti'
 
 
 models_to_plot = {
@@ -66,7 +66,7 @@ models_to_plot = {
 
 # tables_to_plot = [i for i in range(1, 13)]
 # tables_to_plot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-tables_to_plot = [5, 6, 7, 8, 9, 10, 11, 12]
+tables_to_plot = [8, 9, 10, 11, 12]
 # tables_to_plot = [7]
 model_keys = ['base_rmg', 'improved_rmg', 'aramco']
 # model_keys = ['base_rmg']
@@ -75,6 +75,7 @@ model_keys = ['base_rmg', 'improved_rmg', 'aramco']
 # Load the experimental conditions
 
 ignition_delay_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
+ignition_delay_data = '/work/westgroup/harris.se/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
 df_exp = pd.read_csv(ignition_delay_data)
 for table_index in tables_to_plot:
 
