@@ -1,3 +1,4 @@
+# revising the script to give a us a lot more random options
 import os
 import numpy as np
 import glob
@@ -175,6 +176,13 @@ elif family == 'H_Abstraction':
     d_new_bond = reaction.ts['forward'][0].distance_data.distances['d23']
 else:
     raise NotImplementedError(f'family {family} not supported')
+
+stretch_H = False
+if len(sys.argv) > 2:
+    if sys.argv[2].lower() == 'stretch_h' or sys.argv[2].lower() == '--stretch_h' or sys.argv[2].lower() == '--stretch_h=true':
+        stretch_H = True
+if stretch_H:
+    H_distance_R *= 1.18
 
 reaction_core = ase.atoms.Atoms([r1_atoms[H_notR_index], r0_atoms[H_R_index], r0_atoms[H_atom_index]])
 

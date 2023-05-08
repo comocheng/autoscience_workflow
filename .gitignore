@@ -133,3 +133,11 @@ dmypy.json
 
 
 .vscode
+
+*.h5
+*.csv
+*.yaml
+*.png
+
+dft/kinetics/reaction*
+

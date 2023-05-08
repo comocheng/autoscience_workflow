@@ -203,12 +203,14 @@ mechs = {
     'AramcoMech3.0': 'aramco',
     'chem_annotated': 'base_rmg',
     'chem_annotated.': 'base_rmg',
-    'cutoff3_20230113': 'improved_model',
-    'cutoff3_20230418': 'improved_model',
-    'cutoff3_20230113.': 'improved_model',
-    'cutoff3_20230418.': 'improved_model',
+    'cutoff3_20230113': 'improved24',
+    'cutoff3_20230418': 'improved24',
+    'cutoff3_20230113.': 'improved24',
+    'cutoff3_20230418.': 'improved24',
     'one_week': 'one_week',
     'one_week.': 'one_week',
+    'cutoff3_20230505_top50': 'improved_1week',
+    'cutoff3_20230505_top50.': 'improved_1week',
 }
 save_dir = os.path.join(this_dir, mechs[os.path.basename(cti_path)[:-4]])
 
@@ -276,7 +278,7 @@ def run_flame_speed(condition_index):
     flame = ct.FreeFlame(gas, width=width)
     flame.flame.set_steady_tolerances(default=tol_ss)   # set tolerances
     flame.flame.set_transient_tolerances(default=tol_ts)
-    flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01)  # decrease this
+    flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01, prune=0.001)
     # flame.max_time_step_count = 5000
     flame.max_time_step_count = 900
     loglevel = 1
@@ -296,6 +298,8 @@ def run_flame_speed(condition_index):
     else:
         print('Initial flame conditions not found, using default')
         raise OSError
+
+    flame.max_grid_points = 30000
 
     if analyze_convergence:
         callback, speeds, grids = make_callback(flame)

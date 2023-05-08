@@ -203,12 +203,14 @@ mechs = {
     'AramcoMech3.0': 'aramco',
     'chem_annotated': 'base_rmg',
     'chem_annotated.': 'base_rmg',
-    'cutoff3_20230113': 'improved_model',
-    'cutoff3_20230418': 'improved_model',
-    'cutoff3_20230113.': 'improved_model',
-    'cutoff3_20230418.': 'improved_model',
+    'cutoff3_20230113': 'improved24',
+    'cutoff3_20230418': 'improved24',
+    'cutoff3_20230113.': 'improved24',
+    'cutoff3_20230418.': 'improved24',
     'one_week': 'one_week',
     'one_week.': 'one_week',
+    'cutoff3_20230505_top50': 'improved_1week',
+    'cutoff3_20230505_top50.': 'improved_1week',
 }
 save_dir = os.path.join(this_dir, mechs[os.path.basename(cti_path)[:-4]])
 
