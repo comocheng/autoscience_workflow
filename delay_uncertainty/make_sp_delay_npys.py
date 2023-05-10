@@ -84,44 +84,64 @@ perturbed_gas = ct.Solution(perturbed_cti_path)
 
 # Take Reactor Conditions from Table 7 of supplementary info in
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
-def run_simulation(T, P, X):
+def run_simulation(T_orig, P_orig, X_orig):
     # function to run a RCM simulation
 
-    # gas is a global object
-    t_end = 1.0  # time in seconds
-    base_gas.TPX = T, P, X
+    atols = [1e-15, 1e-15, 1e-18]
+    rtols = [1e-9, 1e-12, 1e-15]
+    for attempt_index in range(0, len(atols)):
+        T = T_orig
+        P = P_orig
+        X = X_orig
 
-    reactor = ct.IdealGasReactor(base_gas)
-    reactor_net = ct.ReactorNet([reactor])
+        # gas is a global object
+        t_end = 1.0  # time in seconds
+        base_gas.TPX = T, P, X
 
-    times = [0]
-    T = [reactor.T]
-    P = [reactor.thermo.P]
-    X = [reactor.thermo.X]  # mol fractions
-    MAX_STEPS = 1000000
-    step_count = 0
-    while reactor_net.time < t_end:
-        try:
-            reactor_net.step()
-        except ct._cantera.CanteraError:
-            print('Reactor failed to solve!')
-            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-            return 0
+        reactor = ct.IdealGasReactor(base_gas)
+        reactor_net = ct.ReactorNet([reactor])
+        reactor_net.atol = atols[attempt_index]
+        reactor_net.rtol = rtols[attempt_index]
 
-        times.append(reactor_net.time)
-        T.append(reactor.T)
-        P.append(reactor.thermo.P)
-        X.append(reactor.thermo.X)
+        times = [0]
+        T = [reactor.T]
+        P = [reactor.thermo.P]
+        X = [reactor.thermo.X]  # mol fractions
+        MAX_STEPS = 10000
+        step_count = 0
+        failed = False
+        while reactor_net.time < t_end:
+            try:
+                reactor_net.step()
+            except ct._cantera.CanteraError:
+                print(f'Reactor failed to solve! {attempt_index}')
+                failed = True
+                break
+                # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                # return 0
 
-        step_count += 1
-        if step_count > MAX_STEPS:
-            print('Too many steps! Reactor failed to solve!')
-            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-            return 0
+            times.append(reactor_net.time)
+            T.append(reactor.T)
+            P.append(reactor.thermo.P)
+            X.append(reactor.thermo.X)
 
-    slopes = np.gradient(P, times)
-    delay_i = np.argmax(slopes)
-    return times[delay_i]
+            step_count += 1
+            if step_count > MAX_STEPS:
+                print(f'Too many steps! Reactor failed to solve! {attempt_index}')
+                # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                failed = True
+                break
+                # return 0
+
+        if not failed:
+            slopes = np.gradient(P, times)
+            delay_i = np.argmax(slopes)
+            return times[delay_i]
+        print(f'trying again {attempt_index}')
+
+    print('Reactor failed to solve after many attempts!')
+    print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    return 0
 
 
 # Load the experimental conditions
