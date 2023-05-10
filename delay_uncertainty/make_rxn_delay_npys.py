@@ -31,9 +31,13 @@ working_dir = os.path.join(os.path.dirname(chemkin))
 def perturb_species(species, delta):
     # takes in an RMG species object
     # change the enthalpy offset
+    increase = None
     for poly in species.thermo.polynomials:
         new_coeffs = poly.coeffs
-        new_coeffs[5] *= (1.0 + delta)
+        if not increase:
+            # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
+            increase = delta * new_coeffs[5]
+        new_coeffs[5] += increase
         poly.coeffs = new_coeffs
 
 

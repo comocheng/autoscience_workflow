@@ -27,9 +27,13 @@ def same_reaction(rxn1, rxn2):
 def perturb_species(species, delta):
     # takes in an RMG species object
     # change the enthalpy offset
+    increase = None
     for poly in species.thermo.polynomials:
         new_coeffs = poly.coeffs
-        new_coeffs[5] *= (1.0 + delta)
+        if not increase:
+            # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
+            increase = delta * new_coeffs[5]
+        new_coeffs[5] += increase
         poly.coeffs = new_coeffs
 
 
@@ -82,13 +86,15 @@ perturbed_gas = ct.Solution(perturbed_cti_path)
 
 # load the experimental conditions
 flame_speed_data = '/work/westgroup/harris.se/autoscience/autoscience/butane/experimental_data/butane_flamespeeds.csv'
-flame_speed_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_flamespeeds.csv'
+# flame_speed_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_flamespeeds.csv'
 df_exp = pd.read_csv(flame_speed_data)
 
 
 # get just the Park data
 data_slice = df_exp[df_exp['Reference'] == 'Park et al. 2016']
-N = 51
+# N = 51
+
+N = 32
 phi_min = 0.6
 phi_max = 2.0
 equiv_ratios = np.linspace(phi_min, phi_max, N)
@@ -144,13 +150,16 @@ def run_flame_speed(condition_index):
     flame.flame.set_steady_tolerances(default=tol_ss)   # set tolerances
     flame.flame.set_transient_tolerances(default=tol_ts)
     # flame.set_refine_criteria(ratio=5, slope=0.25, curve=0.27)  # loose
-    flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01, prune=0.001)  # tight
+    flame.set_refine_criteria(ratio=3, slope=0.08, curve=0.08)  # medium
+    # flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01, prune=0.001)  # tight
     # flame.max_time_step_count = 5000
-    flame.max_time_step_count = 5000
+    flame.max_time_step_count = 1000
     loglevel = 1
 
     # set up from previous run
-    h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
+    scaled_index = int(condition_index / N * 51)  # convert from 32 to 51 ints
+    # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
+    h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{scaled_index}.h5")
     if os.path.exists(h5_filepath_guess):
         print('Loading initial flame conditions from', h5_filepath_guess)
         print("Load initial guess from HDF file via SolutionArray")
@@ -160,11 +169,21 @@ def run_flame_speed(condition_index):
         flame.set_initial_guess(data=arr2)
 
     else:
-        # print('Initial flame conditions not found, using default')
-        raise OSError
+        print('Initial flame conditions not found, using default')
+        # raise OSError
+
+    flame.max_grid_points = 30000
 
     print("about to solve")
-    flame.solve(loglevel=loglevel, auto=True)
+    try:
+        flame.solve(loglevel=loglevel, auto=True)
+    except Exception:  # TODO figure out which error specifically is causing the failure
+        print('Solver Failure!!')
+        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+        return 0
+    except:
+        print('Bare except since the other thing didnt work')
+        return 0
     Su = flame.velocity[0]
 
     # Too many to run to save h5 files
@@ -207,11 +226,12 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
     # Run all simulations in parallel
     flame_speeds = np.zeros(len(equiv_ratios))
     condition_indices = np.arange(0, len(equiv_ratios))
-    with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=32) as executor:
         for condition_index, flame_speed in zip(condition_indices, executor.map(
             run_flame_speed,
             condition_indices)
         ):
             flame_speeds[condition_index] = flame_speed
+    reaction_flamespeeds[i, :] = flame_speeds
 
-np.save(os.path.join(f'flame_speeds_{rxn_index_start:04}.npy'), flame_speeds)
+np.save(os.path.join(f'flame_speeds_{rxn_index_start:04}.npy'), reaction_flamespeeds)

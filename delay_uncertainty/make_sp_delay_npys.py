@@ -27,9 +27,13 @@ working_dir = os.path.join(os.path.dirname(chemkin))
 def perturb_species(species, delta):
     # takes in an RMG species object
     # change the enthalpy offset
+    increase = None
     for poly in species.thermo.polynomials:
         new_coeffs = poly.coeffs
-        new_coeffs[5] *= (1.0 + delta)
+        if not increase:
+            # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
+            increase = delta * new_coeffs[5]
+        new_coeffs[5] += increase
         poly.coeffs = new_coeffs
 
 
@@ -94,6 +98,8 @@ def run_simulation(T, P, X):
     T = [reactor.T]
     P = [reactor.thermo.P]
     X = [reactor.thermo.X]  # mol fractions
+    MAX_STEPS = 1000000
+    step_count = 0
     while reactor_net.time < t_end:
         try:
             reactor_net.step()
@@ -106,6 +112,12 @@ def run_simulation(T, P, X):
         T.append(reactor.T)
         P.append(reactor.thermo.P)
         X.append(reactor.thermo.X)
+
+        step_count += 1
+        if step_count > MAX_STEPS:
+            print('Too many steps! Reactor failed to solve!')
+            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            return 0
 
     slopes = np.gradient(P, times)
     delay_i = np.argmax(slopes)
