@@ -149,16 +149,18 @@ def run_flame_speed(condition_index, param_index):
     flame = ct.FreeFlame(base_gas, width=width)
     flame.flame.set_steady_tolerances(default=tol_ss)   # set tolerances
     flame.flame.set_transient_tolerances(default=tol_ts)
-    flame.set_refine_criteria(ratio=5, slope=0.25, curve=0.27)  # loose
+    # flame.set_refine_criteria(ratio=5, slope=0.25, curve=0.27)  # loose
     # flame.set_refine_criteria(ratio=3, slope=0.08, curve=0.08)  # medium
-    # flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01, prune=0.001)  # tight
+    flame.set_refine_criteria(ratio=2, slope=0.01, curve=0.01, prune=0.001)  # tight
     # flame.max_time_step_count = 5000
     flame.max_time_step_count = 1000
     loglevel = 1
 
     # set up from previous run
     # scaled_index = int(condition_index / N * 51)  # convert from 32 to 51 ints
-    h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
+    # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
+    param_dir = os.path.join(working_dir, f'param_{param_index:04}')
+    h5_filepath_guess = os.path.join(param_dir, f"perturbed_flame_{condition_index}.h5")
     # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_coarse {scaled_index}.h5")
     if os.path.exists(h5_filepath_guess):
         print('Loading initial flame conditions from', h5_filepath_guess)
@@ -190,7 +192,7 @@ def run_flame_speed(condition_index, param_index):
     print("Save HDF")
     param_dir = os.path.join(working_dir, f'param_{param_index:04}')
     os.makedirs(param_dir, exist_ok=True)
-    hdf_filepath = os.path.join(param_dir, f"perturbed_flame_{condition_index}.h5")
+    hdf_filepath = os.path.join(param_dir, f"perturbed_flame_tight_{condition_index}.h5")
     flame.write_hdf(
         hdf_filepath,
         group="freeflame",
@@ -237,4 +239,4 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
             flame_speeds[condition_index] = flame_speed
     reaction_flamespeeds[i, :] = flame_speeds
 
-np.save(os.path.join(f'flame_speeds_{rxn_index_start:04}.npy'), reaction_flamespeeds)
+np.save(os.path.join(f'flame_speeds_tight_{rxn_index_start:04}.npy'), reaction_flamespeeds)
