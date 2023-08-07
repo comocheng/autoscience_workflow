@@ -54,20 +54,20 @@ transport = os.path.join(working_dir, 'tran.dat')
 species_dict = os.path.join(working_dir, 'species_dictionary.txt')
 species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
 print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
-base_cti_path = os.path.join(working_dir, 'base.cti')
+base_yaml_path = os.path.join(working_dir, 'base.yaml')
 perturbed_chemkin = os.path.join(working_dir, 'perturbed.inp')
-perturbed_cti_path = os.path.join(working_dir, 'perturbed.cti')
+perturbed_yaml_path = os.path.join(working_dir, 'perturbed.yaml')
 
 skip_create_perturb = False
-if os.path.exists(perturbed_cti_path):
+if os.path.exists(perturbed_yaml_path):
     skip_create_perturb = True
-    print('Perturbed cti already exists, skipping creation of perturbed mechanism')
+    print('Perturbed yaml already exists, skipping creation of perturbed mechanism')
 
 if not skip_create_perturb:
     if experimental_table_index == 7:  # only do this once, instead of once for each of the 12 tables
         # load the chemkin file and create a normal and perturbed cti for simulations:
         # # write base cantera
-        subprocess.run(['ck2cti', f'--input={chemkin}', f'--transport={transport}', f'--output={base_cti_path}'])
+        subprocess.run(['ck2yaml', f'--input={chemkin}', f'--transport={transport}', f'--output={base_yaml_path}'])
 
         delta = 0.1
         for i in range(0, len(species_list)):
@@ -81,15 +81,15 @@ if not skip_create_perturb:
 
         # save the results
         rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
-        subprocess.run(['ck2cti', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_cti_path}'])
+        subprocess.run(['ck2yaml', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_yaml_path}'])
     else:
-        while not os.path.exists(perturbed_cti_path):
+        while not os.path.exists(perturbed_yaml_path):
             time.sleep(10)
 
 
 # load the 2 ctis
-base_gas = ct.Solution(base_cti_path)
-perturbed_gas = ct.Solution(perturbed_cti_path)
+base_gas = ct.Solution(base_yaml_path)
+perturbed_gas = ct.Solution(perturbed_yaml_path)
 
 
 # Take Reactor Conditions from Table 7 of supplementary info in
@@ -226,7 +226,7 @@ reaction_delays = np.zeros((len(perturbed_gas.reactions()), len(temperatures)))
 # for i in range(0, len(perturbed_gas.species())):
 #     print(f'perturbing {i} {perturbed_gas.species()[i]}')
 #     # load the base gas
-#     base_gas = ct.Solution(base_cti_path)
+#     base_gas = ct.Solution(base_yaml_path)
 
 #     # run the simulations at condition #j
 #     base_gas.modify_species(i, perturbed_gas.species()[i])
@@ -269,7 +269,7 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
         continue
 
     # load the base gas
-    base_gas = ct.Solution(base_cti_path)
+    base_gas = ct.Solution(base_yaml_path)
     # order is not preserved between the mechanisms, so we have to find the reaction that matches
     if same_reaction(perturbed_gas.reactions()[i], base_gas.reactions()[i]):
         perturbed_index = i
