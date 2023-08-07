@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import cantera as ct
 import numpy as np
 import pandas as pd
@@ -63,23 +64,28 @@ if os.path.exists(perturbed_cti_path):
     print('Perturbed cti already exists, skipping creation of perturbed mechanism')
 
 if not skip_create_perturb:
-    # load the chemkin file and create a normal and perturbed cti for simulations:
-    # # write base cantera
-    subprocess.run(['ck2cti', f'--input={chemkin}', f'--transport={transport}', f'--output={base_cti_path}'])
+    if experimental_table_index == 7:  # only do this once, instead of once for each of the 12 tables
+        # load the chemkin file and create a normal and perturbed cti for simulations:
+        # # write base cantera
+        subprocess.run(['ck2cti', f'--input={chemkin}', f'--transport={transport}', f'--output={base_cti_path}'])
 
-    delta = 0.1
-    for i in range(0, len(species_list)):
-        perturb_species(species_list[i], delta)
+        delta = 0.1
+        for i in range(0, len(species_list)):
+            perturb_species(species_list[i], delta)
 
-    for i in range(0, len(reaction_list)):
-        try:
-            perturb_reaction(reaction_list[i], delta)
-        except AttributeError:
-            continue
+        for i in range(0, len(reaction_list)):
+            try:
+                perturb_reaction(reaction_list[i], delta)
+            except AttributeError:
+                continue
 
-    # save the results
-    rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
-    subprocess.run(['ck2cti', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_cti_path}'])
+        # save the results
+        rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
+        subprocess.run(['ck2cti', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_cti_path}'])
+    else:
+        while not os.path.exists(perturbed_cti_path):
+            time.sleep(10)
+
 
 # load the 2 ctis
 base_gas = ct.Solution(base_cti_path)
