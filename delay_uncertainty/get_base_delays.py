@@ -21,12 +21,12 @@ working_dir = os.path.join(os.path.dirname(chemkin))
 # species_dict = os.path.join(working_dir, 'species_dictionary.txt')
 # species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
 # print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
-base_cti_path = os.path.join(working_dir, 'base.cti')
+base_yaml_path = os.path.join(working_dir, 'base.yaml')
 
-assert os.path.exists(base_cti_path)
+assert os.path.exists(base_yaml_path)
 
 # load the 2 ctis
-base_gas = ct.Solution(base_cti_path)
+base_gas = ct.Solution(base_yaml_path)
 
 
 # Take Reactor Conditions from Table 7 of supplementary info in
