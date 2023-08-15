@@ -13,15 +13,17 @@ except KeyError:
     DFT_DIR = '/work/westgroup/harris.se/autoscience/reaction_calculator/dft'
 
 species_df = pd.read_csv(os.path.join(DFT_DIR, 'species_database.csv'))
-
 total_species_list = [rmgpy.species.Species().from_adjacency_list(adj_list) for adj_list in species_df['adjacency_list'].values]
 
 
 def get_unique_species_index(species):
+    """warning, this has the potential to be incorrect if species_df is modified later on
+    but the speed advantages from generating total_species_list once on import are worth the risk
+    """
     for j in range(len(total_species_list)):
         if species.is_isomorphic(total_species_list[j]):
             return int(species_df['i'].values[j])
-    raise IndexError('Species not in database')
+    raise IndexError(f'Species {str(species)} not in database')
 
 
 def get_unique_reaction_index(reaction):
@@ -74,3 +76,107 @@ def reaction2smiles(reaction):
             string += f"{prod.to_smiles()}+"
     label = string[:-1]
     return label
+
+
+def add_species_to_database(species_list):
+    """Takes a list of RMG species and adds only the new species to the databse
+    """
+    # Check if there are any new species:
+    species_to_add = []
+
+    # reload the species database just in case we're working with a stale version
+    species_csv = os.path.join(DFT_DIR, 'species_database.csv')
+    species_df = pd.read_csv(species_csv)
+    print(f'Loaded species database contains {len(species_df)} unique species')
+    for i, new_sp in enumerate(species_list):
+        already_exists = False
+        for db_species_adj_list in species_df['adjacency_list'].values:
+            db_sp = rmgpy.species.Species().from_adjacency_list(db_species_adj_list)
+            if db_sp.is_isomorphic(new_sp):
+                already_exists = True
+                break
+        if already_exists:
+            continue
+        species_to_add.append(new_sp)
+
+    # add the new species
+    print('Added the following species to the database:')
+    for k, new_sp in enumerate(species_to_add):
+        # first check that it's unique compared to everything before it in species_to_add
+        is_unique = True
+        for m in range(k):
+            if new_sp.is_isomorphic(species_to_add[m]):
+                is_unique = False
+                break
+        if not is_unique:
+            continue
+
+        name = new_sp.label
+        smiles = new_sp.smiles
+        # the split is for weird bug? where multiple adjacency lists end up in the species_list for a single species
+        # maybe-only if you use chemkin names when loading the chemking
+        adjacency_list = new_sp.to_adjacency_list().split('\n\n\n')[0]
+
+        print(f'\t{name}')
+        species_df = species_df.append({'i': len(species_df), 'name': name, 'SMILES': smiles, 'adjacency_list': adjacency_list}, ignore_index=True)
+
+    print('Saving new species database...')
+    with open(species_csv, "w", newline="") as f:
+        species_df.to_csv(species_csv, index=False)
+        f.flush()
+
+    # load it back in to test that it worked
+    species_df = pd.read_csv(species_csv)
+    print(f'Species database now contains {len(species_df)} unique species')
+
+
+def add_reaction_to_database(reaction_list):
+    # reload reaction_df and species_df fresh:
+    # species_df = pd.read_csv(os.path.join(DFT_DIR, 'species_database.csv'))
+    # total_species_list = [rmgpy.species.Species().from_adjacency_list(adj_list) for adj_list in species_df['adjacency_list'].values]
+    # print(f'Reloaded species database contains {len(species_df)} unique species')
+
+    reaction_csv = os.path.join(DFT_DIR, 'reaction_database.csv')
+    reaction_df = pd.read_csv(reaction_csv)
+    print(f'Loaded reaction database contains {len(reaction_df)} unique reactions')
+
+    print('Looking for new reactions in mechanism...')
+    entries_to_add = []
+    for j in range(len(reaction_list)):
+        unique_string = get_unique_string(reaction_list[j])
+        already_exists = False
+        for database_str in reaction_df['unique_string'].values:
+            if unique_string == database_str:
+                already_exists = True
+                break
+        if not already_exists:
+            entries_to_add.append([j, unique_string])
+    print(f'Found {len(entries_to_add)} new reactions')
+
+    print('Added the following new reactions to the database:')
+    # actually add the new reactions
+
+    for j in range(len(entries_to_add)):
+        rmg_index = entries_to_add[j][0]
+        unique_string = entries_to_add[j][1]
+        # make sure the 'unique_string' is actually unique compared to everything that came before it
+        already_exists = False
+        for k in range(j):
+            # compare unique_string
+            if entries_to_add[k][1] == unique_string:
+                already_exists = True
+                break
+        if already_exists:
+            continue
+        name = str(reaction_list[rmg_index])
+        smiles = reaction2smiles(reaction_list[rmg_index])
+
+        print(f'\t{name}')
+        reaction_df = reaction_df.append({'i': len(reaction_df), 'name': name, 'SMILES': smiles, 'unique_string': unique_string}, ignore_index=True)
+
+    print('Saving new reaction database...')
+    reaction_df.to_csv(reaction_csv, index=False)
+
+    # load it back in to test that it worked
+    reaction_df = pd.read_csv(reaction_csv)
+    print(f'Reaction database now contains {len(reaction_df)} unique reactions')
