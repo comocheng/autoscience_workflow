@@ -12,6 +12,7 @@ import subprocess
 chemkin = sys.argv[1]
 rxn_index_start = int(sys.argv[2])  # start index for SLURM parallelization
 working_dir = os.path.join(os.path.dirname(chemkin))
+MAX_WORKERS = 16
 
 
 def same_reaction(rxn1, rxn2):
@@ -92,7 +93,8 @@ df_exp = pd.read_csv(flame_speed_data)
 
 # get just the Park data
 data_slice = df_exp[df_exp['Reference'] == 'Park et al. 2016']
-N = 51
+# N = 51
+N = MAX_WORKERS
 
 # N = 32
 phi_min = 0.6
@@ -157,10 +159,10 @@ def run_flame_speed(condition_index, param_index):
     loglevel = 1
 
     # set up from previous run
-    # scaled_index = int(condition_index / N * 51)  # convert from 32 to 51 ints
+    scaled_index = int(condition_index / N * 51)  # convert from 32 to 51 ints
     # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
     param_dir = os.path.join(working_dir, f'param_{param_index:04}')
-    h5_filepath_guess = os.path.join(param_dir, f"perturbed_flame_{condition_index}.h5")
+    h5_filepath_guess = os.path.join(param_dir, f"perturbed_flame_coarse_{scaled_index}.h5")
     # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_coarse {scaled_index}.h5")
     if os.path.exists(h5_filepath_guess):
         print('Loading initial flame conditions from', h5_filepath_guess)
@@ -172,7 +174,7 @@ def run_flame_speed(condition_index, param_index):
 
     else:
         print('Initial flame conditions not found, using default')
-        # raise OSError
+        raise OSError
 
     flame.max_grid_points = 30000
 
@@ -192,7 +194,7 @@ def run_flame_speed(condition_index, param_index):
     print("Save HDF")
     param_dir = os.path.join(working_dir, f'param_{param_index:04}')
     os.makedirs(param_dir, exist_ok=True)
-    hdf_filepath = os.path.join(param_dir, f"perturbed_flame_tight_{condition_index}.h5")
+    hdf_filepath = os.path.join(param_dir, f"perturbed_flame_tight_{scaled_index}.h5")
     flame.write_hdf(
         hdf_filepath,
         group="freeflame",
@@ -230,7 +232,7 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
     # Run all simulations in parallel
     flame_speeds = np.zeros(len(equiv_ratios))
     condition_indices = np.arange(0, len(equiv_ratios))
-    with concurrent.futures.ProcessPoolExecutor(max_workers=32) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         for condition_index, flame_speed in zip(condition_indices, executor.map(
             run_flame_speed,
             condition_indices,

@@ -12,6 +12,8 @@ import subprocess
 chemkin = sys.argv[1]
 rxn_index_start = int(sys.argv[2])  # start index for SLURM parallelization
 working_dir = os.path.join(os.path.dirname(chemkin))
+# working_dir = '/work/westgroup/harris.se/autoscience/reaction_calculator/fs_sensitivity/base_rmg_1week'
+MAX_WORKERS = 16
 
 
 def same_reaction(rxn1, rxn2):
@@ -54,30 +56,30 @@ perturbed_chemkin = os.path.join(working_dir, 'perturbed.inp')
 perturbed_cti_path = os.path.join(working_dir, 'perturbed.cti')
 
 
-skip_create_perturb = False
-if os.path.exists(perturbed_cti_path):
-    skip_create_perturb = True
-    print('Perturbed cti already exists, skipping creation of perturbed mechanism')
+# skip_create_perturb = False
+# if os.path.exists(perturbed_cti_path):
+#     skip_create_perturb = True
+#     print('Perturbed cti already exists, skipping creation of perturbed mechanism')
 
 
-if not skip_create_perturb:
-    # load the chemkin file and create a normal and perturbed cti for simulations:
-    # # write base cantera
-    subprocess.run(['ck2cti', f'--input={chemkin}', f'--transport={transport}', f'--output={base_cti_path}'])
+# if not skip_create_perturb:
+#     # load the chemkin file and create a normal and perturbed cti for simulations:
+#     # # write base cantera
+#     subprocess.run(['ck2cti', f'--input={chemkin}', f'--transport={transport}', f'--output={base_cti_path}'])
 
-    delta = 0.1
-    for i in range(0, len(species_list)):
-        perturb_species(species_list[i], delta)
+#     delta = 0.1
+#     for i in range(0, len(species_list)):
+#         perturb_species(species_list[i], delta)
 
-    for i in range(0, len(reaction_list)):
-        try:
-            perturb_reaction(reaction_list[i], delta)
-        except AttributeError:
-            continue
+#     for i in range(0, len(reaction_list)):
+#         try:
+#             perturb_reaction(reaction_list[i], delta)
+#         except AttributeError:
+#             continue
 
-    # save the results
-    rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
-    subprocess.run(['ck2cti', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_cti_path}'])
+#     # save the results
+#     rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
+#     subprocess.run(['ck2cti', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_cti_path}'])
 
 # load the 2 ctis
 base_gas = ct.Solution(base_cti_path)
@@ -92,7 +94,7 @@ df_exp = pd.read_csv(flame_speed_data)
 
 # get just the Park data
 data_slice = df_exp[df_exp['Reference'] == 'Park et al. 2016']
-N = 51
+N = MAX_WORKERS  # only do 16 equivalence ratios for easy computation
 
 # N = 32
 phi_min = 0.6
@@ -157,9 +159,10 @@ def run_flame_speed(condition_index, param_index):
     loglevel = 1
 
     # set up from previous run
-    # scaled_index = int(condition_index / N * 51)  # convert from 32 to 51 ints
-    h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
-    # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_coarse {scaled_index}.h5")
+    scaled_index = int(condition_index / N * 51)  # convert from 32 to 51 ints
+    # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_{condition_index}.h5")
+    h5_filepath_guess = f'/work/westgroup/harris.se/autoscience/reaction_calculator/plot_flame_speeds/coarse_one_week/saved_flame_{scaled_index}.h5'
+    # h5_filepath_guess = os.path.join(working_dir, f"saved_flame_coarse_{scaled_index}.h5")
     if os.path.exists(h5_filepath_guess):
         print('Loading initial flame conditions from', h5_filepath_guess)
         print("Load initial guess from HDF file via SolutionArray")
@@ -169,8 +172,8 @@ def run_flame_speed(condition_index, param_index):
         flame.set_initial_guess(data=arr2)
 
     else:
-        print('Initial flame conditions not found, using default')
-        # raise OSError
+        # print('Initial flame conditions not found, using default')
+        raise OSError
 
     flame.max_grid_points = 30000
 
@@ -190,7 +193,7 @@ def run_flame_speed(condition_index, param_index):
     print("Save HDF")
     param_dir = os.path.join(working_dir, f'param_{param_index:04}')
     os.makedirs(param_dir, exist_ok=True)
-    hdf_filepath = os.path.join(param_dir, f"perturbed_flame_{condition_index}.h5")
+    hdf_filepath = os.path.join(param_dir, f"perturbed_flame_coarse_{scaled_index}.h5")
     flame.write_hdf(
         hdf_filepath,
         group="freeflame",
@@ -228,7 +231,7 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
     # Run all simulations in parallel
     flame_speeds = np.zeros(len(equiv_ratios))
     condition_indices = np.arange(0, len(equiv_ratios))
-    with concurrent.futures.ProcessPoolExecutor(max_workers=32) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         for condition_index, flame_speed in zip(condition_indices, executor.map(
             run_flame_speed,
             condition_indices,
@@ -237,4 +240,4 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
             flame_speeds[condition_index] = flame_speed
     reaction_flamespeeds[i, :] = flame_speeds
 
-np.save(os.path.join(f'flame_speeds_{rxn_index_start:04}.npy'), reaction_flamespeeds)
+np.save(os.path.join(f'flame_speeds_coarse_{rxn_index_start:04}.npy'), reaction_flamespeeds)

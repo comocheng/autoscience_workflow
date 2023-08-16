@@ -223,42 +223,9 @@ def same_reaction(rxn1, rxn2):
 species_delays = np.zeros((len(perturbed_gas.species()), len(temperatures)))
 reaction_delays = np.zeros((len(perturbed_gas.reactions()), len(temperatures)))
 
-# for i in range(0, len(perturbed_gas.species())):
-#     print(f'perturbing {i} {perturbed_gas.species()[i]}')
-#     # load the base gas
-#     base_gas = ct.Solution(base_yaml_path)
-
-#     # run the simulations at condition #j
-#     base_gas.modify_species(i, perturbed_gas.species()[i])
-
-#     # Run all simulations in parallel
-#     delays = np.zeros(len(temperatures))
-#     condition_indices = np.arange(0, len(temperatures))
-
-#     with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
-#         for condition_index, delay_time in zip(condition_indices, executor.map(
-#             run_simulation,
-#             [temperatures[j] for j in condition_indices],
-#             [P7[0] for j in condition_indices],
-#             [concentrations[0] for j in condition_indices]
-#         )):
-#             delays[condition_index] = delay_time
-#     species_delays[i, :] = delays
-
-# save the result as a pandas dataframe
 table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
 os.makedirs(table_dir, exist_ok=True)
-# np.save(os.path.join(table_dir, f'species_delays_{experimental_table_index:04}.npy'), species_delays)
 
-
-# spec_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
-# for i in range(0, len(temperatures)):
-#     spec_df = spec_df.append({'T': temperatures[i], 'P': P7[0], 'delay(ms)': delays[i], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
-# spec_df.to_csv(os.path.join(table_dir, f'species_delays_{experimental_table_index:04}.csv'))
-
-
-# rxn_df = pd.DataFrame(columns=['T', 'P', 'delays(ms)', 'phi', 'X', 'table_index'])
-# for i in range(0, len(perturbed_gas.reactions())):
 for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reactions()))):
     print(f'perturbing {i} {perturbed_gas.reactions()[i]}')
     # TODO skip the ones that haven't actually been perturbed because PDEP or whatever
@@ -299,14 +266,3 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
 
 # save the result as a numpy thing
 np.save(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}_{rxn_index_start:04}.npy'), reaction_delays)
-
-#     # append the results to the pandas dataframe
-#     for k in range(0, len(reaction_delays)):
-#         rxn_df = rxn_df.append({'T': temperatures[k], 'P': P7[0], 'delay(ms)': reaction_delays[k], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
-#     rxn_df.to_csv(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.csv'))
-
-# # save the result as a pandas dataframe
-
-# for k in range(0, len(temperatures)):
-#     rxn_df = rxn_df.append({'T': temperatures[k], 'P': P7[0], 'delay(ms)': reaction_delays[k], 'phi': phi7[0], 'X': concentrations[0], 'table_index': experimental_table_index}, ignore_index=True)
-# rxn_df.to_csv(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}.csv'))

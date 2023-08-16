@@ -211,6 +211,8 @@ mechs = {
     'one_week.': 'one_week',
     'cutoff3_20230505_top50': 'improved_1week',
     'cutoff3_20230505_top50.': 'improved_1week',
+    'cutoff3_20230511_top50': 'improved_1week',
+    'cutoff3_20230511_top50.': 'improved_1week',
 }
 save_dir = os.path.join(this_dir, mechs[os.path.basename(cti_path)[:-4]])
 
@@ -307,10 +309,10 @@ def run_flame_speed(condition_index):
     flame.solve(loglevel=loglevel, auto=True)
     Su = flame.velocity[0]
 
-    print("Save CSV")
-    # csv_filepath = os.path.join(os.path.dirname(cti_path), f"flame_{condition_index}.csv")
-    csv_filepath = os.path.join(save_dir, f"saved_flame_{condition_index}.csv")
-    flame.write_csv(csv_filepath)
+    # print("Save CSV")
+    # # csv_filepath = os.path.join(os.path.dirname(cti_path), f"flame_{condition_index}.csv")
+    # csv_filepath = os.path.join(save_dir, f"saved_flame_{condition_index}.csv")
+    # flame.write_csv(csv_filepath)
 
     print("Save HDF")
     hdf_filepath = os.path.join(save_dir, f"saved_flame_{condition_index}.h5")

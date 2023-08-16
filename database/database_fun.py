@@ -57,6 +57,18 @@ def get_unique_string(reaction):
     return unique_string
 
 
+def index2adj_list(index):
+    """Function to return species adjacency list given a species database index
+    """
+    return species_df[species_df['i'] == index]['adjacency_list'].values[0]
+
+
+def index2species(index):
+    """Function to return species object given a species database index
+    """
+    return rmgpy.species.Species().from_adjacency_list(index2adj_list(index))
+
+
 def reaction2smiles(reaction):
     """Takes an RMG reaction and returns the smiles representation
     This is not sorted and therefore not unique, also smiles isn't unique to begin with

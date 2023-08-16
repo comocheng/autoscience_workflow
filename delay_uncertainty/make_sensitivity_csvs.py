@@ -37,6 +37,8 @@ def perturb_reaction(rxn, delta):
 
 chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
 chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
+chemkin = '/work/westgroup/harris.se/autoscience/fuels/butane/small_lib_20230801/chem_annotated.inp'
+
 working_dir = os.path.dirname(chemkin)
 transport = os.path.join(working_dir, 'tran.dat')
 species_dict = os.path.join(working_dir, 'species_dictionary.txt')
@@ -69,6 +71,9 @@ if not skip_create_perturb:
     # save the results
     rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
     subprocess.run(['ck2cti', f'--input={perturbed_chemkin}', f'--transport={transport}', f'--output={perturbed_cti_path}'])
+
+# for now the goal is just to make the base and perturbed models
+exit(0)
 
 # load the 2 ctis
 base_gas = ct.Solution(base_cti_path)

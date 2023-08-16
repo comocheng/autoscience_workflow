@@ -211,6 +211,8 @@ mechs = {
     'one_week.': 'one_week',
     'cutoff3_20230505_top50': 'improved_1week',
     'cutoff3_20230505_top50.': 'improved_1week',
+    'cutoff3_20230511_top50': 'improved_1week',
+    'cutoff3_20230511_top50.': 'improved_1week',
 }
 save_dir = os.path.join(this_dir, mechs[os.path.basename(cti_path)[:-4]])
 

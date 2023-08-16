@@ -15,7 +15,7 @@ import concurrent.futures
 mech = int(sys.argv[1])
 
 base_rmg = '/work/westgroup/harris.se/autoscience/reaction_calculator/models/base_rmg_1week/chem_annotated.cti'
-improved_rmg = '/work/westgroup/harris.se/autoscience/reaction_calculator/models/base_rmg_1week/cutoff3_20230505_top50.cti'
+improved_rmg = '/work/westgroup/harris.se/autoscience/reaction_calculator/models/base_rmg_1week/cutoff3_20230511_top50.cti'
 aramco = '/work/westgroup/harris.se/autoscience/autoscience/butane/models/aramco/AramcoMech3.0.cti'
 
 MAX_WORKERS = 48
@@ -23,36 +23,64 @@ MAX_WORKERS = 48
 
 # Take Reactor Conditions from Table 7 of supplementary info in
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
-def run_simulation(T, P, X):
+def run_simulation(T_orig, P_orig, X_orig):
     # function to run a RCM simulation
 
-    # gas is a global object
-    t_end = 1.0  # time in seconds
-    base_gas.TPX = T, P, X
+    atols = [1e-15, 1e-15, 1e-18]
+    rtols = [1e-9, 1e-12, 1e-15]
+    for attempt_index in range(0, len(atols)):
+        T = T_orig
+        P = P_orig
+        X = X_orig
 
-    reactor = ct.IdealGasReactor(base_gas)
-    reactor_net = ct.ReactorNet([reactor])
+        # gas is a global object
+        t_end = 1.0  # time in seconds
+        base_gas.TPX = T, P, X
 
-    times = [0]
-    T = [reactor.T]
-    P = [reactor.thermo.P]
-    X = [reactor.thermo.X]  # mol fractions
-    while reactor_net.time < t_end:
-        try:
-            reactor_net.step()
-        except ct._cantera.CanteraError:
-            print('Reactor failed to solve!')
-            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-            return 0
+        reactor = ct.IdealGasReactor(base_gas)
+        reactor_net = ct.ReactorNet([reactor])
+        reactor_net.atol = atols[attempt_index]
+        reactor_net.rtol = rtols[attempt_index]
 
-        times.append(reactor_net.time)
-        T.append(reactor.T)
-        P.append(reactor.thermo.P)
-        X.append(reactor.thermo.X)
+        times = [0]
+        T = [reactor.T]
+        P = [reactor.thermo.P]
+        X = [reactor.thermo.X]  # mol fractions
+        MAX_STEPS = 10000
+        step_count = 0
+        failed = False
+        while reactor_net.time < t_end:
+            try:
+                reactor_net.step()
+            except ct._cantera.CanteraError:
+                print(f'Reactor failed to solve! {attempt_index}')
+                failed = True
+                break
+                # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                # return 0
 
-    slopes = np.gradient(P, times)
-    delay_i = np.argmax(slopes)
-    return times[delay_i]
+            times.append(reactor_net.time)
+            T.append(reactor.T)
+            P.append(reactor.thermo.P)
+            X.append(reactor.thermo.X)
+
+            step_count += 1
+            if step_count > MAX_STEPS:
+                print(f'Too many steps! Reactor failed to solve! {attempt_index}')
+                # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                failed = True
+                break
+                # return 0
+
+        if not failed:
+            slopes = np.gradient(P, times)
+            delay_i = np.argmax(slopes)
+            return times[delay_i]
+        print(f'trying again {attempt_index}')
+
+    print('Reactor failed to solve after many attempts!')
+    print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    return 0
 
 
 # Load the experimental conditions
@@ -102,7 +130,7 @@ for i in range(0, len(phi7)):
 
         butane_conc = conc_dict.pop('butane(1)')
         conc_dict['C4H10'] = butane_conc
-    
+
     x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
     x_Ar = table_exp['%Ar'].values[i] / 100.0 * x_diluent
     x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
