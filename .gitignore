@@ -139,6 +139,9 @@ dmypy.json
 *.yaml
 *.png
 *.npy
+*.inp
+*.cti
+
 
 dft/kinetics/reaction*
 
