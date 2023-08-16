@@ -90,6 +90,31 @@ def reaction2smiles(reaction):
     return label
 
 
+def reaction_index2smiles(reaction_index):
+    reaction_df = pd.read_csv(os.path.join(DFT_DIR, 'reaction_database.csv'))
+    return reaction_df[reaction_df['i'] == reaction_index]['SMILES'].values[0]
+
+
+def index2reaction(reaction_index):
+    reaction_df = pd.read_csv(os.path.join(DFT_DIR, 'reaction_database.csv'))
+    unique_string = reaction_df[reaction_df['i'] == reaction_index]['unique_string'].values[0]
+
+    reactants_string = unique_string.split('=')[0]
+    reactants_tokens = reactants_string.split('+')
+    reactants_indices = [int(i) for i in reactants_tokens]
+    reactants = [index2species(i) for i in reactants_indices]
+
+    products_string = unique_string.split('=')[1]
+    products_tokens = products_string.split('+')
+    products_indices = [int(i) for i in products_tokens]
+    products = [index2species(i) for i in products_indices]
+
+    new_reaction = rmgpy.reaction.Reaction()
+    new_reaction.reactants = reactants
+    new_reaction.products = products
+    return new_reaction
+
+
 def add_species_to_database(species_list):
     """Takes a list of RMG species and adds only the new species to the databse
     """
@@ -184,7 +209,8 @@ def add_reaction_to_database(reaction_list):
         smiles = reaction2smiles(reaction_list[rmg_index])
 
         print(f'\t{name}')
-        reaction_df = reaction_df.append({'i': len(reaction_df), 'name': name, 'SMILES': smiles, 'unique_string': unique_string}, ignore_index=True)
+        next_i = reaction_df['i'].values[-1] + 1
+        reaction_df = reaction_df.append({'i': next_i, 'name': name, 'SMILES': smiles, 'unique_string': unique_string}, ignore_index=True)
 
     print('Saving new reaction database...')
     reaction_df.to_csv(reaction_csv, index=False)
