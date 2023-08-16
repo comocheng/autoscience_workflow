@@ -142,6 +142,7 @@ dmypy.json
 *.inp
 *.cti
 
+*backup*
 
 dft/kinetics/reaction*
 
