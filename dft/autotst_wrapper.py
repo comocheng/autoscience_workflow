@@ -721,8 +721,10 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     reaction_log(reaction_index, f'Constructing reaction in AutoTST...')
     # Note that AutoTST uses SMILES instead of adjacency list, but we'll worry about that later
     reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
-
+    reaction.get_labeled_reaction()
+    reaction.get_label()
     reaction.ts[direction][0].get_molecules()
+
     try:  # TODO fix issues with import in a try block
         import hotbit
         calc = hotbit.Hotbit()
