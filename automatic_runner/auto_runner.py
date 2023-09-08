@@ -9,8 +9,10 @@ import time
 import yaml
 import datetime
 import subprocess
+import job_manager
 sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/dft/')
 import autotst_wrapper
+
 
 N_CALCULATIONS_TO_SPAWN = 5
 MAX_JOBS_RUNNING = 50
@@ -65,12 +67,12 @@ while True:  # this will just run until the job gets deleted or it runs out of t
     calculations_spawned = 0
     i = 0
     while calculations_spawned < N_CALCULATIONS_TO_SPAWN:
+        with open(calculation_list_file, 'r') as f:
+            top_calculations = yaml.safe_load(f)
+
         if i > len(top_calculations):
             printlog('RAN OUT OF THINGS TO CALCULATE. QUITTING...')
             exit(0)
-
-        with open(calculation_list_file, 'r') as f:
-            top_calculations = yaml.safe_load(f)
 
         idx = top_calculations[i]['index']
 
@@ -150,7 +152,7 @@ while True:  # this will just run until the job gets deleted or it runs out of t
                 pass
 
             if autotst_wrapper.arkane_reaction_complete(idx):
-                print(f'Reaction {idx} {top_calculations[i]["name"]} already ran')
+                printlog(f'Reaction {idx} {top_calculations[i]["name"]} already ran')
                 top_calculations[i]['complete'] = True
                 with open(calculation_list_file, 'w') as f:
                     yaml.dump(top_calculations, f)
@@ -161,6 +163,7 @@ while True:  # this will just run until the job gets deleted or it runs out of t
             # make sure that index isn't currently running:
             if check_index_running(idx):
                 # run something else while we wait for this to finish
+                printlog(f'Index {idx} is still running, so move on to something else')
                 i += 1
                 continue
 
@@ -192,7 +195,7 @@ while True:  # this will just run until the job gets deleted or it runs out of t
                     i += 1
                     continue
 
-                subprocess.run(['python', os.path.join(DFT_DIR, 'run_shell6.sh'), idx])
+                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_shell6.sh'), str(idx)])
                 calculations_spawned += 1
                 i += 1
                 previous_attempts.append(calc_name)
@@ -212,7 +215,7 @@ while True:  # this will just run until the job gets deleted or it runs out of t
                     i += 1
                     continue
 
-                subprocess.run(['python', os.path.join(DFT_DIR, 'run_center6.sh'), idx])
+                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_center6.sh'), str(idx)])
                 calculations_spawned += 1
                 i += 1
                 previous_attempts.append(calc_name)
@@ -231,20 +234,39 @@ while True:  # this will just run until the job gets deleted or it runs out of t
                     i += 1
                     continue
 
-                subprocess.run(['python', os.path.join(DFT_DIR, 'run_overall6.sh'), idx])
+                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_overall6.sh'), str(idx)])
                 calculations_spawned += 1
                 i += 1
                 previous_attempts.append(calc_name)
 
             # ------------------------------ Run Arkane ---------------------------------- #
+            elif not autotst_wrapper.arkane_reaction_complete(idx):
+                # SKIP if we already tried this
+                calc_name = f'reaction {idx} arkane'
+                if calc_name in previous_attempts:
+                    printlog(f'Skipping PREVIOUSLY ATTEMPTED {top_calculations[i]["type"]} {idx} arkane {top_calculations[i]["name"]}')
+                    printlog(f'Marking failed')
+                    
+                    top_calculations[i]['failed'] = True
+                    with open(calculation_list_file, 'w') as f:
+                        yaml.dump(top_calculations, f)
+
+                    i += 1
+                    continue
+                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_reaction_arkane6.sh'), str(idx)])
+                calculations_spawned += 1
+                i += 1
+                previous_attempts.append(calc_name)
+
             else:
-                autotst_wrapper.setup_arkane_reaction(idx, force_valid_ts=False)
-                autotst_wrapper.run_arkane_reaction(idx)
-                printlog(f'Completed reaction {idx} {top_calculations[i]["name"]}')
+                printlog(f'Marking this reaction {idx} {top_calculations[i]["name"]} as complete')
                 top_calculations[i]['complete'] = True
                 with open(calculation_list_file, 'w') as f:
                     yaml.dump(top_calculations, f)
+                i += 1
+                continue
 
-            # wait an hour before attempting to spawn more jobs
-            printlog(f'Waiting for jobs to get on the queue')
-                time.sleep(60.0 * 60.0)
+    # wait an hour before attempting to spawn another set of jobs
+    wait_minutes = 60.0
+    printlog(f'Waiting {wait_minutes} minutes for jobs to get on the queue')
+    time.sleep(wait_minutes * 60.0)

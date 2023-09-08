@@ -913,7 +913,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     #    reaction_log(reaction_index, 'Cannot run arkane until overall job is complete')
     #    return False
 
-    reaction_smiles = database_fun.reaction2smiles(reaction_index)
+    reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
     reaction_log(reaction_index, f'starting setup_arkane_reaction for reaction {reaction_index} {reaction_smiles}')
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
