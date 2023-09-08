@@ -367,10 +367,12 @@ def optimize_conformers(species_index):
 
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
-    n_conformers = len(glob.glob(os.path.join(base_dir, f'{base_name}*.com')))
+    glob_str = os.path.join(base_dir, f'{base_name}*.com')
+    n_conformers = len(glob.glob(glob_str))
     if n_conformers == 0:
+        print(f'No conformers with glob string {glob_str}')
         return False
-        # print(f'No conformers with basename {base_name} found in {base_dir}')
+        
     incomplete_indices = []
     good_runs = []
     finished_runs = []
