@@ -48,7 +48,7 @@ def perturb_reaction(rxn, delta):
 
 transport = os.path.join(working_dir, 'tran.dat')
 species_dict = os.path.join(working_dir, 'species_dictionary.txt')
-species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
+species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport, use_chemkin_names=True)
 print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
 base_yaml_path = os.path.join(working_dir, 'base.yaml')
 perturbed_chemkin = os.path.join(working_dir, 'perturbed.inp')
