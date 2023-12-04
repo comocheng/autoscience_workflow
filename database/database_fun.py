@@ -20,10 +20,16 @@ def get_unique_species_index(species):
     """warning, this has the potential to be incorrect if species_df is modified later on
     but the speed advantages from generating total_species_list once on import are worth the risk
     """
-    for j in range(len(total_species_list)):
-        if species.is_isomorphic(total_species_list[j]):
-            return int(species_df['i'].values[j])
-    raise IndexError(f'Species {str(species)} not in database')
+    if type(species) == rmgpy.molecule.molecule.Molecule:
+        for j in range(len(total_species_list)):
+            if species.is_isomorphic(total_species_list[j].molecule[0]):
+                return int(species_df['i'].values[j])
+        raise IndexError(f'Species {str(species)} not in database')
+    else:    
+        for j in range(len(total_species_list)):
+            if species.is_isomorphic(total_species_list[j]):
+                return int(species_df['i'].values[j])
+        raise IndexError(f'Species {str(species)} not in database')
 
 
 def get_unique_reaction_index(reaction):
@@ -129,7 +135,7 @@ def add_species_to_database(species_list):
         already_exists = False
         for db_species_adj_list in species_df['adjacency_list'].values:
             db_sp = rmgpy.species.Species().from_adjacency_list(db_species_adj_list)
-            if db_sp.is_isomorphic(new_sp):
+            if db_sp.molecule[0].is_isomorphic(new_sp.molecule[0]):
                 already_exists = True
                 break
         if already_exists:
