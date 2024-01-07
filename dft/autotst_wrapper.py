@@ -21,10 +21,18 @@ import autotst.calculator.vibrational_analysis
 
 import ase.io.gaussian
 
+# for rotor scans
+import zmatrix  # https://github.com/wutobias/r2z
+from simtk import unit
+
+
 # for arkane at end
 import rmgpy.chemkin
 import arkane.exceptions
 import shutil
+
+
+
 
 sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/database/')
 import database_fun
@@ -216,6 +224,9 @@ def screen_species_conformers(species_index):
     """Sort through all the possible conformers and use a cheap calculator
     like Hotbit or LJ to screen the best options to investigate
 
+    NOTE DO NOT USE LJ TO SCREEN CONFORMER GEOMETRIES. IT'S TERRIBLE
+    It should only be used to test for obvious errors in the workflow if Hotbit is not installed
+
     Takes a species index and saves the conformers to investigate as .pickle?
     """
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
@@ -231,7 +242,8 @@ def screen_species_conformers(species_index):
     # Get species smiles
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
-    spec = autotst.species.Species(rmg_species=rmg_species)
+    # spec = autotst.species.Species(rmg_species=rmg_species)  # this probably won't work, so just run with smiles
+    spec = autotst.species.Species([species_smiles])
     species_log(species_index, f'Loaded species {species_smiles}')
 
     try:
@@ -364,6 +376,323 @@ def optimize_conformers(species_index):
     gaussian_conformers_job.submit(slurm_cmd)
     os.chdir(start_dir)
 
+def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
+    """Function to write a Gaussian rotor scan
+    Takes an autoTST conformer and a rotor index
+    """
+
+    # header
+    scan_job_lines = [
+        "%mem=5GB",
+        "%nprocshared=48",
+        "#P m062x/cc-pVTZ",
+        "Opt=(CalcFC,ModRedun)",
+        "",
+        "Gaussian input for a rotor scan",
+        "",
+        f"0 {conformer.rmg_molecule.multiplicity}",
+    ]
+    rdmol = conformer._rdkit_molecule
+    cart_crds = np.array(rdmol.GetConformers()[0].GetPositions()) * unit.angstrom
+    zm = zmatrix.ZMatrix(conformer._rdkit_molecule)
+
+    zm_text = zm.build_pretty_zcrds(cart_crds)
+    zm_lines = zm_text.splitlines()
+    bonds = []
+    angles = []
+    dihedrals = []
+    b = 1  # indices for bonds
+    a = 1
+    d = 1
+    for line in zm_lines:
+        tokens = line.split()
+        # print(line)
+        if len(tokens) == 1:
+            pass
+        elif len(tokens) == 3:
+            bonds.append(f'B{b}        {tokens[2]}')
+            tokens[2] = f'B{b}'
+            b += 1
+        elif len(tokens) == 5:
+            bonds.append(f'B{b}        {tokens[2]}')
+            tokens[2] = f'B{b}'
+            b += 1
+            angles.append(f'A{a}        {tokens[4]}')
+            tokens[4] = f'A{a}'
+            a += 1
+        elif len(tokens) == 7:
+            bonds.append(f'B{b}        {tokens[2]}')
+            tokens[2] = f'B{b}'
+            b += 1
+            angles.append(f'A{a}        {tokens[4]}')
+            tokens[4] = f'A{a}'
+            a += 1
+            dihedrals.append(f'D{d}        {tokens[6]}')
+            tokens[6] = f'D{d}'
+            d += 1
+            tokens.append('0')
+        else:
+            raise NotImplementedError
+
+        scan_job_lines.append(' '.join(tokens))
+
+    scan_job_lines.append("")
+    for bond in bonds:
+        scan_job_lines.append(bond)
+    for angle in angles:
+        scan_job_lines.append(angle)
+    for dihedral in dihedrals:
+        scan_job_lines.append(dihedral)
+    scan_job_lines.append("")
+
+    # # bond order and connectivity - not sure if this is needed
+    # rdkit_bonds = zm.rdmol.GetBonds()
+    # bond_list = [f'{i + 1}' for i in range(0, len(rdkit_bonds))]
+    # for bond in rdkit_bonds:
+    #     bond_start = zm.a2z(bond.GetBeginAtomIdx())
+    #     bond_end = zm.a2z(bond.GetEndAtomIdx())
+    #     bond_order = bond.GetBondTypeAsDouble()
+    #     bond_list[bond_start] += f' {bond_end + 1} {bond_order}'
+    # for bond in bond_list:
+    #     scan_job_lines.append(bond)
+    # scan_job_lines.append("")
+
+    # dihedral to scan
+    indices = conformer.torsions[torsion_index].atom_indices
+
+    # # don't convert to z-matrix index??
+    # first = indices[0] + 1
+    # second = indices[1] + 1
+    # third = indices[2] + 1
+    # fourth = indices[3] + 1
+
+    # convert to z-matrix index
+    first = zm.a2z(indices[0]) + 1
+    second = zm.a2z(indices[1]) + 1
+    third = zm.a2z(indices[2]) + 1
+    fourth = zm.a2z(indices[3]) + 1
+
+    N_increments = int(360.0 / degree_delta)
+    scan_job_lines.append(f"D {first} {second} {third} {fourth} S {N_increments} {float(degree_delta)}")
+
+    scan_job_lines.append("")
+    with open(fname, 'w') as f:
+        for line in scan_job_lines:
+            f.write(line + '\n')
+
+
+def setup_rotors(species_index):
+    """Find the lowest energy conformer of the species and then set up Gaussian rotors calculations
+    """
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    conformer_dir = os.path.join(species_dir, 'conformers')
+    rotor_dir = os.path.join(species_dir, 'rotors')
+    os.makedirs(rotor_dir, exist_ok=True)
+    
+    # check if the rotors were already set up
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.com'))
+    if rotor_logfiles:
+        species_log(species_index, 'Rotors already set up')
+        return True
+
+    species_log(species_index, f'Starting species rotor setup')
+    # not sure if I need to include this
+    # |
+    # |
+    # |
+    # V
+    #
+    # # Tragically, we have to repeat this part after screening the species conformers in order to get
+    # # the AutoTST conformer object into memory. But hopefully, saving the XYZ files speeds this along
+
+    # # Hmm... the old code seems to just reconstruct the rotors from a brand new conformer object...TODO I'll look into that later
+
+    # # ------------------ Use Hotbit to screen the conformers ------------------
+    # Get species smiles
+    rmg_species = database_fun.index2species(species_index)
+    species_smiles = rmg_species.smiles
+    # # spec = autotst.species.Species(rmg_species=rmg_species)  # this probably won't work, so just run with smiles
+    # spec = autotst.species.Species([species_smiles])
+    # species_log(species_index, f'Loaded species {species_smiles}')
+
+    # try:
+    #     import hotbit
+    #     calc = hotbit.Hotbit()
+    # except (ImportError, RuntimeError):
+    #     raise  # you really shouldn't be using LennardJones for geometry
+    #     # if hotbit fails, use built-in lennard jones
+    #     import ase.calculators.lj
+    #     species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+    #     calc = ase.calculators.lj.LennardJones()
+    # # hotbit can't handle Ar, He, change calculator to lj if it's in the species
+    # hotbit_skiplist = ['AR', 'HE', 'NE']
+    # for element in hotbit_skiplist:
+    #     if element in species_smiles.upper():
+    #         import ase.calculators.lj
+    #         species_log(species_index, f'Using built-in ase LennardJones calculator instead of Hotbit for {element}')
+    #         calc = ase.calculators.lj.LennardJones()
+    #         break
+
+    # spec.generate_conformers(
+    #     ase_calculator=calc,
+    #     max_combos=10000,
+    #     max_conformers=1000,
+    #     results_dir=conformer_dir,
+    #     save_results=True,
+    # # )
+
+    # n_conformers = 0
+    # for key in spec.conformers:
+    #     n_conformers += len(spec.conformers[key])
+    # species_log(species_index, f'{n_conformers} found with {str(calc)}')
+
+
+    # Next we need to get the lowest energy conformer...
+    conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
+    new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
+    shutil.copy(conformer_file, new_conformer_loc)
+
+
+    # get the rotors
+    with open(new_conformer_loc, 'r') as f:
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+
+    # make a conformer object again
+    new_cf = autotst.species.Conformer(smiles=species_smiles)  # TODO make this from adjacency list?
+    new_cf._ase_molecule = atoms
+    new_cf.update_coords_from(mol_type="ase")
+    torsions = new_cf.get_torsions()  # TODO - is this only the nonterminal ones?
+    n_rotors = len(torsions)
+
+    # TODO verify atom labeling produces correct torsion calculations
+    # we need to verify that this gets the atom labeling correct, or else revert to the commented out section above
+
+    if n_rotors == 0:
+        no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
+        with open(no_rotor_file, 'w') as f:
+            f.write('NO ROTORS')
+        print("no rotors to calculate")
+        exit(0)
+
+    print("generating gaussian input files")
+    # gaussian = autotst.calculator.gaussian.Gaussian(conformer=new_cf)
+    for i, torsion in enumerate(new_cf.torsions):
+        # print(torsion)
+        # calc = gaussian.get_rotor_calc(torsion_index=i)
+        # calc.label = f'rotor_{i:04}'
+        # calc.directory = rotor_dir
+        # calc.parameters.pop('scratch')
+        # calc.parameters.pop('multiplicity')
+        # calc.parameters['mult'] = new_cf.rmg_molecule.multiplicity
+        # calc.write_input(new_cf.ase_molecule)
+
+        fname = os.path.join(rotor_dir, f'rotor_{i:04}.com')
+        write_scan_file(fname, new_cf, i)
+    return True
+
+
+
+    # # ------------------ Use Gaussian to do a more detailed calculation ------------------
+    # species_log(species_index, "Generating gaussian input files")
+    # save_offset = 0
+    # for resonance_smiles in spec.conformers.keys():
+    #     for i, cf in enumerate(spec.conformers[resonance_smiles]):
+    #         conformer_index = i + save_offset
+    #         gaussian = autotst.calculator.gaussian.Gaussian(conformer=cf)
+    #         calc = gaussian.get_conformer_calc()
+    #         calc.label = f'conformer_{conformer_index:04}'
+    #         calc.directory = conformer_dir
+    #         calc.parameters.pop('scratch')
+    #         calc.parameters.pop('multiplicity')
+    #         calc.parameters['mult'] = cf.rmg_molecule.multiplicity
+    #         calc.chk = f'conformer_{conformer_index:04}.chk'
+    #         calc.write_input(cf.ase_molecule)
+    #     save_offset += len(spec.conformers[resonance_smiles])
+
+    # # write to the status file to indicate that the conformer screening is complete
+    # set_species_status(species_index, 'screen_conformers', True)
+    # species_log(species_index, f'Conformer screening complete')
+    # return True
+
+def run_rotors(species_index):
+    """Run the rotor scans that were set up"""
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    rotor_dir = os.path.join(species_dir, 'rotors')
+    species_log(species_index, f'Starting rotor scans optimization job')
+
+    # skip running rotors if the NO_ROTORS file is present
+    no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
+    if os.path.exists(no_rotor_file):
+        species_log(species_index, f'No rotors to run. Skipping...')
+        return True
+
+    # TODO make this work with restart
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
+    if rotor_logfiles:
+        species_log(species_index, 'Rotors already ran')
+        return True
+
+    n_rotors = len(glob.glob(os.path.join(rotor_dir, 'rotor_*.com')))
+    rerun_indices = []
+    for i in range(0, n_rotors):
+        rotor_logfile = os.path.join(rotor_dir, f'rotor_{i:04}.log')
+        if os.path.exists(rotor_logfile):
+            termination_status = get_termination_status(rotor_logfile)
+            if termination_status == 1 or termination_status == -1:
+                rerun_indices.append(i)
+
+    # Make slurm script to run all the rotor calculations
+    slurm_run_file = os.path.join(rotor_dir, 'run.sh')
+    slurm_settings = {
+        '--job-name': f'g16_rot_{species_index}',
+        '--error': 'error.log',
+        '--nodes': 1,
+        '--partition': 'west,short',
+        '--exclude': 'c5003',
+        '--mem': '20Gb',
+        '--time': '24:00:00',
+        '--cpus-per-task': 16,
+        '--array': f'0-{n_rotors - 1}%30',
+    }
+    if rerun_indices:
+        slurm_run_file = os.path.join(rotor_dir, 'rerun.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
+
+    slurm_file_writer = job_manager.SlurmJobFile(
+        full_path=slurm_run_file,
+    )
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        'fname="rotor_${RUN_i}.com"\n\n',
+
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(rotor_dir)
+    gaussian_rotors_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    gaussian_rotors_job.submit(slurm_cmd)
+    os.chdir(start_dir)
 
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
@@ -456,7 +785,10 @@ def get_lowest_energy_gaussian_file(base_dir):
     lowest_file = None
     log_files = glob.glob(os.path.join(base_dir, '*.log'))
     for gaussian_log_file in log_files:
-        energy = get_gaussian_file_energy(gaussian_log_file)
+        try:
+            energy = get_gaussian_file_energy(gaussian_log_file)
+        except arkane.exceptions.LogError:
+            continue
         if energy is None:
             continue
         if energy < lowest_energy:
@@ -566,7 +898,8 @@ def setup_arkane_species(species_index, include_rotors=False):
     species_smiles = rmg_species.smiles
     # make a conformer object from the RMG species
     # AutoTST converts the molecule back into SMILES, but we're ignoring this for now
-    new_cf = autotst.species.Conformer(rmg_molecule=rmg_species.molecule[0])
+    # new_cf = autotst.species.Conformer(rmg_molecule=rmg_species.molecule[0])
+    new_cf = autotst.species.Conformer(smiles=species_smiles)
     # read the conformer geometry from the file
     conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
 
@@ -723,6 +1056,8 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     reaction_log(reaction_index, f'Constructing reaction in AutoTST...')
     # Note that AutoTST uses SMILES instead of adjacency list, but we'll worry about that later
     reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    # smiles = database_fun.reaction2smiles(rmg_reaction)
+    # reaction = autotst.reaction.Reaction(label=smiles)
     reaction.get_labeled_reaction()
     reaction.get_label()
     reaction.ts[direction][0].get_molecules()
@@ -878,8 +1213,13 @@ def check_vib_irc(reaction_index, gaussian_logfile):
         print('logfile did not terminate normally')
         return False
 
-    rmg_reaction = database_fun.index2reaction(reaction_index)
-    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)
+
+    # rmg_reaction = database_fun.index2reaction(reaction_index)
+    # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    
+
     va = autotst.calculator.vibrational_analysis.VibrationalAnalysis(
         transitionstate=reaction.ts['forward'][0], log_file=gaussian_logfile
     )
@@ -949,8 +1289,8 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
 
     # Read in the reaction
     rmg_reaction = database_fun.index2reaction(reaction_index)
-    # reaction = autotst.reaction.Reaction(label=reaction_smiles)
-    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to this even though it's not dependable
+    # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
     reaction_log(reaction_index, f'Creating arkane files for reaction {reaction_index} {reaction.label}')
     reaction.ts[direction][0].get_molecules()
 
@@ -994,6 +1334,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         if duplicate:
             continue
 
+        print(f'{reactant}')
         species_index = database_fun.get_unique_species_index(reactant)
         species_smiles = reactant.smiles
 
