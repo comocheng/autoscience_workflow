@@ -229,6 +229,9 @@ def screen_species_conformers(species_index):
 
     Takes a species index and saves the conformers to investigate as .pickle?
     """
+    if arkane_species_complete(species_index):
+        return True
+
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     if get_species_status(species_index, 'screen_conformers'):
         species_log(species_index, 'Conformers already screened')
@@ -301,6 +304,9 @@ def screen_species_conformers(species_index):
 
 def optimize_conformers(species_index):
     """Optimize the conformers that were screened"""
+    if arkane_species_complete(species_index):
+        return True
+
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
     species_log(species_index, f'Starting conformer optimization job')
@@ -375,6 +381,7 @@ def optimize_conformers(species_index):
 
     gaussian_conformers_job.submit(slurm_cmd)
     os.chdir(start_dir)
+
 
 def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
     """Function to write a Gaussian rotor scan
@@ -484,11 +491,14 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
 def setup_rotors(species_index):
     """Find the lowest energy conformer of the species and then set up Gaussian rotors calculations
     """
+    if arkane_species_complete(species_index):
+        return True
+
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
     rotor_dir = os.path.join(species_dir, 'rotors')
     os.makedirs(rotor_dir, exist_ok=True)
-    
+
     # check if the rotors were already set up
     rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.com'))
     if rotor_logfiles:
@@ -546,12 +556,10 @@ def setup_rotors(species_index):
     #     n_conformers += len(spec.conformers[key])
     # species_log(species_index, f'{n_conformers} found with {str(calc)}')
 
-
     # Next we need to get the lowest energy conformer...
     conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
     new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
     shutil.copy(conformer_file, new_conformer_loc)
-
 
     # get the rotors
     with open(new_conformer_loc, 'r') as f:
@@ -572,7 +580,7 @@ def setup_rotors(species_index):
         with open(no_rotor_file, 'w') as f:
             f.write('NO ROTORS')
         print("no rotors to calculate")
-        exit(0)
+        return True
 
     print("generating gaussian input files")
     # gaussian = autotst.calculator.gaussian.Gaussian(conformer=new_cf)
@@ -589,8 +597,6 @@ def setup_rotors(species_index):
         fname = os.path.join(rotor_dir, f'rotor_{i:04}.com')
         write_scan_file(fname, new_cf, i)
     return True
-
-
 
     # # ------------------ Use Gaussian to do a more detailed calculation ------------------
     # species_log(species_index, "Generating gaussian input files")
@@ -614,8 +620,12 @@ def setup_rotors(species_index):
     # species_log(species_index, f'Conformer screening complete')
     # return True
 
+
 def run_rotors(species_index):
     """Run the rotor scans that were set up"""
+    if arkane_species_complete(species_index):
+        return True
+
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     rotor_dir = os.path.join(species_dir, 'rotors')
     species_log(species_index, f'Starting rotor scans optimization job')
@@ -694,6 +704,7 @@ def run_rotors(species_index):
     gaussian_rotors_job.submit(slurm_cmd)
     os.chdir(start_dir)
 
+
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     glob_str = os.path.join(base_dir, f'{base_name}*.com')
@@ -701,7 +712,7 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='co
     if n_conformers == 0:
         print(f'No conformers with glob string {glob_str}')
         return False
-        
+
     incomplete_indices = []
     good_runs = []
     finished_runs = []
@@ -817,7 +828,7 @@ def get_rotor_info(conformer, torsion, torsion_index):
     return info
 
 
-def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors=False):
+def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors=True):
     # assume rotor and conformer logs have already been copied into the arkane directory
     species_name = os.path.basename(gauss_log[:-4])
     parser = cclib.io.ccread(gauss_log)
@@ -878,18 +889,20 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
     return True
 
 
-def setup_arkane_species(species_index, include_rotors=False):
+def setup_arkane_species(species_index, include_rotors=True):
     """Function to set up the Arkane species directory for a given species
     default is to not do rotors. But if rotors are specified, the arkane directory
     will be arkane_rotors
+
+    TODO add force recalc option to rerun calculation from scratch
     """
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
+    rotor_dir = os.path.join(species_dir, 'rotors')
     arkane_dir = os.path.join(species_dir, 'arkane')
     os.makedirs(arkane_dir, exist_ok=True)
-    if include_rotors:
-        arkane_dir = os.path.join(species_dir, 'arkane_rotors')
-    species_log(species_index, f'Setting up Arkane species')
+
+    species_log(species_index, f'Setting up Arkane species with rotors={include_rotors}')
     if arkane_species_complete(species_index):
         species_log(species_index, f'Arkane species already complete')
         return True
@@ -901,7 +914,19 @@ def setup_arkane_species(species_index, include_rotors=False):
     # new_cf = autotst.species.Conformer(rmg_molecule=rmg_species.molecule[0])
     new_cf = autotst.species.Conformer(smiles=species_smiles)
     # read the conformer geometry from the file
-    conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
+
+    if include_rotors:
+        # copy the conformer file in the rotors dir
+        conformer_files = glob.glob(os.path.join(rotor_dir, 'conformer_*.log'))
+        assert conformer_files, 'No conformer files in rotor dir'
+        conformer_file = conformer_files[0]
+
+        # copy the rotor files
+        rotor_files = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
+        for rotor_file in rotor_files:
+            shutil.copy(rotor_file, arkane_dir)
+    else:
+        conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
 
     shutil.copy(conformer_file, arkane_dir)
     with open(conformer_file, 'r') as f:
@@ -909,14 +934,10 @@ def setup_arkane_species(species_index, include_rotors=False):
 
     new_cf._ase_molecule = atoms
     new_cf.update_coords_from(mol_type="ase")
-
     if include_rotors:
-        rotor_dir = os.path.join(species_dir, 'rotors')
         torsions = new_cf.get_torsions()
-        for i, torsion in enumerate(torsions):
-            # TODO check for valid output
-            torfile = os.path.join(rotor_dir, f'rotor_{i:04}.log')
-            shutil.copy(torfile, arkane_dir)
+        assert len(torsions) == len(rotor_files)
+
 
     # write the Arkane conformer file
     write_arkane_conformer_file(new_cf, conformer_file, arkane_dir, include_rotors=include_rotors)
