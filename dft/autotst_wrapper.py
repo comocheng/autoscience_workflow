@@ -506,57 +506,12 @@ def setup_rotors(species_index):
         return True
 
     species_log(species_index, f'Starting species rotor setup')
-    # not sure if I need to include this
-    # |
-    # |
-    # |
-    # V
-    #
-    # # Tragically, we have to repeat this part after screening the species conformers in order to get
-    # # the AutoTST conformer object into memory. But hopefully, saving the XYZ files speeds this along
-
-    # # Hmm... the old code seems to just reconstruct the rotors from a brand new conformer object...TODO I'll look into that later
 
     # # ------------------ Use Hotbit to screen the conformers ------------------
     # Get species smiles
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
-    # # spec = autotst.species.Species(rmg_species=rmg_species)  # this probably won't work, so just run with smiles
-    # spec = autotst.species.Species([species_smiles])
-    # species_log(species_index, f'Loaded species {species_smiles}')
 
-    # try:
-    #     import hotbit
-    #     calc = hotbit.Hotbit()
-    # except (ImportError, RuntimeError):
-    #     raise  # you really shouldn't be using LennardJones for geometry
-    #     # if hotbit fails, use built-in lennard jones
-    #     import ase.calculators.lj
-    #     species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
-    #     calc = ase.calculators.lj.LennardJones()
-    # # hotbit can't handle Ar, He, change calculator to lj if it's in the species
-    # hotbit_skiplist = ['AR', 'HE', 'NE']
-    # for element in hotbit_skiplist:
-    #     if element in species_smiles.upper():
-    #         import ase.calculators.lj
-    #         species_log(species_index, f'Using built-in ase LennardJones calculator instead of Hotbit for {element}')
-    #         calc = ase.calculators.lj.LennardJones()
-    #         break
-
-    # spec.generate_conformers(
-    #     ase_calculator=calc,
-    #     max_combos=10000,
-    #     max_conformers=1000,
-    #     results_dir=conformer_dir,
-    #     save_results=True,
-    # # )
-
-    # n_conformers = 0
-    # for key in spec.conformers:
-    #     n_conformers += len(spec.conformers[key])
-    # species_log(species_index, f'{n_conformers} found with {str(calc)}')
-
-    # Next we need to get the lowest energy conformer...
     conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
     new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
     shutil.copy(conformer_file, new_conformer_loc)
@@ -583,42 +538,11 @@ def setup_rotors(species_index):
         return True
 
     print("generating gaussian input files")
-    # gaussian = autotst.calculator.gaussian.Gaussian(conformer=new_cf)
     for i, torsion in enumerate(new_cf.torsions):
-        # print(torsion)
-        # calc = gaussian.get_rotor_calc(torsion_index=i)
-        # calc.label = f'rotor_{i:04}'
-        # calc.directory = rotor_dir
-        # calc.parameters.pop('scratch')
-        # calc.parameters.pop('multiplicity')
-        # calc.parameters['mult'] = new_cf.rmg_molecule.multiplicity
-        # calc.write_input(new_cf.ase_molecule)
 
         fname = os.path.join(rotor_dir, f'rotor_{i:04}.com')
         write_scan_file(fname, new_cf, i)
     return True
-
-    # # ------------------ Use Gaussian to do a more detailed calculation ------------------
-    # species_log(species_index, "Generating gaussian input files")
-    # save_offset = 0
-    # for resonance_smiles in spec.conformers.keys():
-    #     for i, cf in enumerate(spec.conformers[resonance_smiles]):
-    #         conformer_index = i + save_offset
-    #         gaussian = autotst.calculator.gaussian.Gaussian(conformer=cf)
-    #         calc = gaussian.get_conformer_calc()
-    #         calc.label = f'conformer_{conformer_index:04}'
-    #         calc.directory = conformer_dir
-    #         calc.parameters.pop('scratch')
-    #         calc.parameters.pop('multiplicity')
-    #         calc.parameters['mult'] = cf.rmg_molecule.multiplicity
-    #         calc.chk = f'conformer_{conformer_index:04}.chk'
-    #         calc.write_input(cf.ase_molecule)
-    #     save_offset += len(spec.conformers[resonance_smiles])
-
-    # # write to the status file to indicate that the conformer screening is complete
-    # set_species_status(species_index, 'screen_conformers', True)
-    # species_log(species_index, f'Conformer screening complete')
-    # return True
 
 
 def run_rotors(species_index):
@@ -628,13 +552,18 @@ def run_rotors(species_index):
 
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     rotor_dir = os.path.join(species_dir, 'rotors')
-    species_log(species_index, f'Starting rotor scans optimization job')
 
     # skip running rotors if the NO_ROTORS file is present
     no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
     if os.path.exists(no_rotor_file):
         species_log(species_index, f'No rotors to run. Skipping...')
         return True
+
+    # check if the rotors were already completed (might setup rerun even if already ran once)
+    if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name='rotor_'):
+        return True  # already ran
+
+    species_log(species_index, f'Starting rotor scans optimization job')
 
     # TODO make this work with restart
     rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
