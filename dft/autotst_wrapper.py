@@ -32,8 +32,6 @@ import arkane.exceptions
 import shutil
 
 
-
-
 sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/database/')
 import database_fun
 
@@ -512,7 +510,21 @@ def setup_rotors(species_index):
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
 
-    conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
+    valid_conformer = False
+    conformer_blacklist = []
+    while not valid_conformer:
+        conformer_file = get_lowest_energy_gaussian_file(conformer_dir, blacklist=conformer_blacklist)
+        if bonds_too_large(conformer_file, species_index):
+            conformer_blacklist.append(conformer_file)
+            species_log(species_index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
+        else:
+            valid_conformer = True
+            species_log(species_index, f'Lowest energy conformer is {conformer_file}')
+
+        if len(conformer_blacklist) >= len(glob.glob(os.path.join(conformer_dir, 'conformer_*.log'))):
+            species_log(species_index, f'No valid conformers found. Quitting...')
+            return False
+
     new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
     shutil.copy(conformer_file, new_conformer_loc)
 
@@ -563,14 +575,7 @@ def run_rotors(species_index):
     if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name='rotor_'):
         return True  # already ran
 
-    species_log(species_index, f'Starting rotor scans optimization job')
-
-    # TODO make this work with restart
-    rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
-    if rotor_logfiles:
-        species_log(species_index, 'Rotors already ran')
-        return True
-
+    species_log(species_index, f'Counting incomplete rotor scans...')
     n_rotors = len(glob.glob(os.path.join(rotor_dir, 'rotor_*.com')))
     rerun_indices = []
     for i in range(0, n_rotors):
@@ -579,7 +584,14 @@ def run_rotors(species_index):
             termination_status = get_termination_status(rotor_logfile)
             if termination_status == 1 or termination_status == -1:
                 rerun_indices.append(i)
+                species_log(species_index, f'Rotor {i} did not complete')
 
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
+    if len(rotor_logfiles) == n_rotors and not rerun_indices:
+        species_log(species_index, 'Rotors already ran')
+        return True
+
+    species_log(species_index, f'Starting rotor scans optimization job')
     # Make slurm script to run all the rotor calculations
     slurm_run_file = os.path.join(rotor_dir, 'run.sh')
     slurm_settings = {
@@ -719,12 +731,15 @@ def get_gaussian_file_geometry(gaussian_log_file):
         return atoms
 
 
-def get_lowest_energy_gaussian_file(base_dir):
+def get_lowest_energy_gaussian_file(base_dir, blacklist=[]):
     """Function to get the lowest energy gaussian .log file from a directory"""
     lowest_energy = 1e6
     lowest_file = None
     log_files = glob.glob(os.path.join(base_dir, '*.log'))
     for gaussian_log_file in log_files:
+        if gaussian_log_file in blacklist:
+            continue
+
         try:
             energy = get_gaussian_file_energy(gaussian_log_file)
         except arkane.exceptions.LogError:
@@ -735,6 +750,34 @@ def get_lowest_energy_gaussian_file(base_dir):
             lowest_energy = energy
             lowest_file = gaussian_log_file
     return lowest_file
+
+
+def bonds_too_large(conformer_file, species_index):
+    """Function to check whether the bonds are too big to make sense for a given species"""
+
+    with open(conformer_file, 'r') as f:
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+
+    # make a conformer object again
+    rmg_species = database_fun.index2species(species_index)
+    species_smiles = rmg_species.smiles
+    new_cf = autotst.species.Conformer(smiles=species_smiles)
+    new_cf._ase_molecule = atoms
+    new_cf.update_coords_from(mol_type="ase")
+
+    for bond in new_cf.get_bonds():
+        bondtype = new_cf._ase_molecule[bond.atom_indices[0]].symbol + \
+            new_cf._ase_molecule[bond.atom_indices[1]].symbol
+
+        if 'H' in bondtype:
+            threshold = 1.5 * 1.0932774602784967  # C-H in butane
+        else:
+            threshold = 1.5 * 1.5240247836472345  # C-C in butane
+
+        if new_cf._ase_molecule.get_distances(*bond.atom_indices)[0] > threshold:
+            return True
+
+    return False
 
 
 def get_rotor_info(conformer, torsion, torsion_index):
@@ -866,7 +909,6 @@ def setup_arkane_species(species_index, include_rotors=True):
     if include_rotors:
         torsions = new_cf.get_torsions()
         assert len(torsions) == len(rotor_files)
-
 
     # write the Arkane conformer file
     write_arkane_conformer_file(new_cf, conformer_file, arkane_dir, include_rotors=include_rotors)
