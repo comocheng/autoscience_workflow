@@ -4,7 +4,6 @@ import os
 import glob
 import sys
 import numpy as np
-import pandas as pd
 import time
 import datetime
 import yaml
@@ -14,12 +13,30 @@ import arkane.ess.gaussian  # does a lot better at reading gaussian files than a
 
 import cclib.io
 
+import rmgpy.species
+import rmgpy.reaction
+import rmgpy.data.kinetics
+
 import autotst.species
 import autotst.reaction
 import autotst.calculator.gaussian
 import autotst.calculator.vibrational_analysis
 
+
+import autotst.conformer.systematic
+import autotst.conformer.utilities
+
+
+# import ase.io
+import ase.constraints
 import ase.io.gaussian
+
+# maybe put this in a try block?
+try:
+    import xtb.ase.calculator
+    # calc = xtb.ase.calculator.XTB()
+except:
+    print("xtb not installed")
 
 # for rotor scans
 import zmatrix  # https://github.com/wutobias/r2z
@@ -133,6 +150,7 @@ def get_reaction_status(reaction_index, job_type):
         - center_opt
         - overall_opt
         - arkane?
+        - hfsp?
     """
     status_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'status.yaml')
     if not os.path.exists(status_file):
@@ -234,6 +252,8 @@ def screen_species_conformers(species_index):
     if get_species_status(species_index, 'screen_conformers'):
         species_log(species_index, 'Conformers already screened')
         return True
+    
+    
 
     conformer_dir = os.path.join(species_dir, 'conformers')
     os.makedirs(conformer_dir, exist_ok=True)
@@ -1107,8 +1127,9 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
 def run_opt(reaction_index, opt_type, direction='forward'):
     """Run a shell, center, or overall optimization
     opt_type can be 'shell', 'center', or 'overall'
+    and now, HFSP
     """
-    assert opt_type in ['shell', 'center', 'overall']
+    assert opt_type in ['shell', 'center', 'overall', 'hfsp']
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     opt_dir = os.path.join(reaction_dir, opt_type)
@@ -1232,7 +1253,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     """
     # check if the arkane job was already completed
     if get_reaction_status(reaction_index, 'arkane_calc'):
-        re(reaction_index, 'Arkane job already ran')
+        reaction_log(reaction_index, 'Arkane job already ran')
         return True
     elif arkane_reaction_complete(reaction_index):
         set_reaction_status(reaction_index, 'arkane_setup', True)
@@ -1438,6 +1459,359 @@ def run_arkane_reaction(reaction_index, direction='forward'):
     slurm_cmd = f"sbatch {arkane_run_file}"
     arkane_job.submit(slurm_cmd)
     os.chdir(start_dir)
+
+
+def get_HFSP_bond_distances(reaction):
+    """Function to estimate the bond distances for the formed and unformed bonds
+    Expects an autotst.reaction.Reaction type input"""
+
+    allowed_families = ['Disproportionation']
+    assert reaction.rmg_reaction.family in allowed_families, 'HFSP opt only implemented for Disproportionation reactions'
+
+    d14 = None
+    d24 = None
+
+    reactants = []
+    products = []
+    reactant_indices = [database_fun.get_unique_species_index(x) for x in reaction.rmg_reaction.reactants]
+    product_indices = [database_fun.get_unique_species_index(x) for x in reaction.rmg_reaction.products]
+    reactant_indices.sort()
+    product_indices.sort()
+
+    for species_index in reactant_indices + product_indices:
+
+        species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+        rotor_dir = os.path.join(species_dir, 'rotors')
+        gaussian_log_file = glob.glob(os.path.join(rotor_dir, 'conformer_*.log'))[0]
+        with open(gaussian_log_file, 'r') as f:
+            atoms = ase.io.gaussian.read_gaussian_out(f)
+
+        rmg_species = database_fun.index2species(species_index)
+        species_smiles = rmg_species.smiles
+
+        # make a conformer object again
+        new_cf = autotst.species.Conformer(smiles=species_smiles)  # TODO make this from adjacency list?
+        new_cf._ase_molecule = atoms
+        new_cf.update_coords_from(mol_type="ase")
+        if species_index in reactant_indices:
+            reactants.append(new_cf)
+        else:
+            products.append(new_cf)
+
+    ref_library_path = os.path.join(rmgpy.settings['database.directory'], 'kinetics')
+    kinetics_database = rmgpy.data.kinetics.KineticsDatabase()
+    kinetics_database.load(
+        ref_library_path,
+        libraries=[],
+        families=allowed_families,
+    )
+    labeled_r, labeled_p = kinetics_database.families[reaction.rmg_reaction.family].get_labeled_reactants_and_products(
+        [x.rmg_molecule for x in reactants],
+        [x.rmg_molecule for x in products]
+    )
+    # Get the 2-4 bond distance
+    atom_labels = labeled_r[0].get_all_labeled_atoms()
+    if '*2' in labeled_r[0].get_all_labeled_atoms():
+        atom2_index = labeled_r[0].atoms.index(atom_labels['*2'])
+        atom4_index = labeled_r[0].atoms.index(atom_labels['*4'])
+        d24 = reactants[0]._ase_molecule.get_distance(atom2_index, atom4_index)
+    else:
+        atom_labels = labeled_r[1].get_all_labeled_atoms()
+        atom2_index = labeled_r[1].atoms.index(atom_labels['*2'])
+        atom4_index = labeled_r[1].atoms.index(atom_labels['*4'])
+        d24 = reactants[1]._ase_molecule.get_distance(atom2_index, atom4_index)
+
+    # Get the 1-4 bond distance
+    atom_labels = labeled_p[0].get_all_labeled_atoms()
+    if '*1' in atom_labels:
+        atom1_index = labeled_p[0].atoms.index(atom_labels['*1'])
+        atom4_index = labeled_p[0].atoms.index(atom_labels['*4'])
+        d14 = products[0]._ase_molecule.get_distance(atom1_index, atom4_index)
+    else:
+        atom_labels = labeled_p[1].get_all_labeled_atoms()
+        atom1_index = labeled_p[1].atoms.index(atom_labels['*1'])
+        atom4_index = labeled_p[1].atoms.index(atom_labels['*4'])
+        d14 = products[1]._ase_molecule.get_distance(atom1_index, atom4_index)
+
+    return d14, d24
+
+
+def get_connected(my_molecule, start_index):
+    """Function to get the indices of all atoms connected to a particular atom
+    Expects and rmg molecule object and the atom index"""
+    connected = []
+    def get_others(start_idx):
+        bonds = my_molecule.get_bonds(my_molecule.atoms[start_idx])
+        for key in bonds.keys():
+
+            atom_index = my_molecule.atoms.index(key)
+            if atom_index in connected:
+                continue
+
+            connected.append(atom_index)
+            get_others(atom_index)
+
+    get_others(start_index)
+    return connected
+
+def get_energy_forces_atom_bond(atoms, ind1, ind2, k, deq):
+    forces = np.zeros(atoms.positions.shape)
+    bd, d = ase.geometry.get_distances([atoms.positions[ind1]], [atoms.positions[ind2]], cell=atoms.cell, pbc=atoms.pbc)
+    if d != 0.0:
+        forces[ind1] = 2.0 * bd * (1.0 - deq / d)
+        forces[ind2] = -forces[ind1]
+    else:
+        forces[ind1] = bd
+        forces[ind2] = bd
+    energy = k * (d - deq) ** 2
+    return energy, k * forces
+
+def get_energy_forces_site_bond(atoms, ind, site_pos, k, deq):
+    forces = np.zeros(atoms.positions.shape)
+    bd, d = ase.geometry.get_distances([atoms.positions[ind]], [site_pos], cell=atoms.cell, pbc=atoms.pbc)
+    if d != 0:
+        forces[ind] = 2.0 * bd * (1.0 - deq / d)
+    else:
+        forces[ind] = bd
+    energy = k * (d - deq) ** 2
+    return energy, k * forces
+
+
+class HarmonicallyForcedXTB(xtb.ase.calculator.XTB):
+    """Taken and modified from Matt Johnson's Pynta https://github.com/zadorlab/pynta"""
+    def get_energy_forces(self):
+        energy = 0.0
+        forces = np.zeros(self.atoms.positions.shape)
+        if hasattr(self.parameters,"atom_bond_potentials"):
+            for atom_bond_potential in self.parameters.atom_bond_potentials:
+                E, F = get_energy_forces_atom_bond(self.atoms, **atom_bond_potential)
+                energy += E
+                forces += F
+
+        if hasattr(self.parameters,"site_bond_potentials"):
+            for site_bond_potential in self.parameters.site_bond_potentials:
+                E, F = get_energy_forces_site_bond(self.atoms, **site_bond_potential)
+                energy += E
+                forces += F
+        return energy[0][0], forces
+
+    def calculate(self, atoms=None, properties=None, system_changes=ase.calculators.calculator.all_changes):
+        xtb.ase.calculator.XTB.calculate(self, atoms=atoms, properties=properties, system_changes=system_changes)
+        energy, forces = self.get_energy_forces()
+        self.results["energy"] += energy
+        self.results["free_energy"] += energy
+        self.results["forces"] += forces
+
+
+def get_s(rmg_molecule, a1, a2):
+    # returns string describing connectivity of the interacting atoms
+    # a1 and a2 are indices
+    
+    # A0--(A1--A2)--A3
+    A0 = ''
+    bonds1 = rmg_molecule.get_bonds(rmg_molecule.atoms[a1])
+    for key in bonds1.keys():
+        if key != rmg_molecule.atoms[a2]:
+            A0 = 'R'
+    
+    A3 = ''
+    bonds2 = rmg_molecule.get_bonds(rmg_molecule.atoms[a2])
+    for key in bonds2.keys():
+        if key != rmg_molecule.atoms[a1]:
+            A3 = 'R'
+    return f'{A0}--(R--R)--{A3}'
+
+
+def get_dk(dwell, s, dist, hydrogen_interaction):
+    # dwell is the distance between breaking bonds (or forming)
+    # for Disproportionation, that's 2-4 and (1-4)
+    assert dist == None or dist == 2
+    if s in ["--(R--R)--"]:  # nothing connected on either end
+        if dist is not None:
+            return dwell * 1.25, 100.0
+        else:
+            if hydrogen_interaction:
+                return dwell * 1.6, 100.0
+            else:
+                return dwell * 1.4, 100.0
+    elif s in ["R--(R--R)--", "--(R--R)--R"]:  # only one atom connected
+        if dist is not None:
+            return dwell * 1.25, 100.0
+        else:
+            if hydrogen_interaction:
+                return dwell * 1.6, 100.0
+            else:
+                return dwell * 1.4, 100.0
+    elif s in ["R--(R--R)--R"]:  # atoms connected on either side
+        if dist is not None:
+            return dwell * 1.25, 100.0
+        else:
+            if hydrogen_interaction:
+                return dwell * 1.6, 100.0
+            else:
+                return dwell * 1.4, 100.0
+
+
+def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_conformers=100):
+    """Function to set up the gaussian files for HFSP opt.
+    
+    Not sure if we'll do the same, shell, center, overall method
+    To start with, we'll just do a direct "overall optimization"
+    """
+
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
+    if not os.path.exists(reaction_dir):
+        os.makedirs(reaction_dir, exist_ok=True)
+    screen_dir = os.path.join(reaction_dir, 'screen')
+    if not os.path.exists(screen_dir):
+        os.makedirs(screen_dir, exist_ok=True)
+    opt_type = 'hfsp'
+    reaction_log(reaction_index, f'Starting {opt_type} opt job')
+
+    screen_dir = os.path.join(reaction_dir, 'screen')
+    opt_dir = os.path.join(reaction_dir, opt_type)
+    os.makedirs(opt_dir, exist_ok=True)
+
+    opt_label = 'fwd_ts_0000.log'
+    if direction == 'reverse':
+        opt_label = 'rev_ts_0000.log'
+
+    # ------------------ Use Hotbit to screen the conformers ------------------
+    # Get reaction from index
+    rmg_reaction = database_fun.index2reaction(reaction_index)
+    reaction_log(reaction_index, f'Constructing reaction in AutoTST...')
+    # Note that AutoTST uses SMILES instead of adjacency list, but we'll worry about that later
+    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    # smiles = database_fun.reaction2smiles(rmg_reaction)
+    # reaction = autotst.reaction.Reaction(label=smiles)
+    reaction.get_labeled_reaction()
+    reaction.get_label()
+    reaction.ts[direction][0].get_molecules()
+
+    try:  # TODO fix issues with import in a try block
+        import hotbit
+        calc = hotbit.Hotbit()
+    except (ImportError, RuntimeError):
+        # if hotbit fails, use built-in lennard jones
+        import ase.calculators.lj
+        reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit. Do not do this for the actual calculation because LJ sucks at geometry optimization')
+        calc = ase.calculators.lj.LennardJones()
+    reaction.generate_conformers(
+        ase_calculator=calc,
+        max_combos=max_combos,
+        max_conformers=max_conformers,
+        save_results=True,
+        results_dir=screen_dir,
+    )
+    reaction_log(reaction_index, f'Done generating conformers in AutoTST...')
+    reaction_log(reaction_index, f'{len(reaction.ts[direction])} conformers found')
+
+
+    # --------------------- Get the Bond distances -----------------------------
+    if not reaction.rmg_reaction.family == 'Disproportionation':
+        raise NotImplementedError('HFSP opt only implemented for Disproportionation reactions')
+    d14, d24 = get_HFSP_bond_distances(reaction)
+
+    atom_labels = reaction.ts[direction][0].rmg_molecule.get_all_labeled_atoms()
+    # for Disproportionation it's 2-4 breaks and 1-4 forms
+    atom1_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*1'])
+    atom2_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*2'])
+    atom3_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*3'])
+    atom4_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*4'])
+
+    hydrogen_interaction24 = reaction.ts[direction][0].rmg_molecule.atoms[atom2_index].is_hydrogen() or \
+                         reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
+
+    hydrogen_interaction14 = reaction.ts[direction][0].rmg_molecule.atoms[atom1_index].is_hydrogen() or \
+                         reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
+
+    # construct the atom bond potentials:
+    # For Disproportionation family: this will be between labeled atoms 4-1 and 4-2
+    atom_bond_potentials = []
+    site_bond_potentials = []
+
+
+    # try re-optimizing with a large d_eq, see if anything changes
+    deq1, k1 = get_dk(d24, get_s(reaction.ts[direction][0].rmg_molecule, atom2_index, atom4_index), 2, hydrogen_interaction24)
+    deq2, k2 = get_dk(d14, get_s(reaction.ts[direction][0].rmg_molecule, atom1_index, atom4_index), None, hydrogen_interaction14)
+    atom_bond_potentials = [
+        {"ind1": atom1_index, "ind2": atom4_index, "k": k1, "deq": deq1},
+        {"ind1": atom4_index, "ind2": atom2_index, "k": k2, "deq": deq2},
+    ]
+
+    # see if anything is bonded to *1, if so, add a soft repelling harmonic potential between it and *2
+    bonds1 = reaction.ts[direction][0].rmg_molecule.get_bonds(reaction.ts[direction][0].rmg_molecule.atoms[atom1_index])
+    if bonds1:
+        key = bonds1.keys()[0]
+        repel_index1 = reaction.ts[direction][0].rmg_molecule.atoms.index(key)
+        repel_index2 = atom2_index
+        atom_bond_potentials.append({"ind1": repel_index1, "ind2": repel_index2, "k": 0.1, "deq": 7})
+
+    # ------------------ Set up the HFSP run --------------------------
+    hfxtb = HarmonicallyForcedXTB(
+        method="GFN1-xTB",
+        atom_bond_potentials=atom_bond_potentials,
+        site_bond_potentials=site_bond_potentials
+    )
+
+    r1_indices = get_connected(reaction.ts[direction][0].rmg_molecule, reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*4']))
+    r2_indices = get_connected(reaction.ts[direction][0].rmg_molecule, reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*1']))
+
+    bond_labels = []
+    for bond in reaction.ts[direction][0].get_bonds()[:-1]:
+        if (bond.atom_indices[0] in r1_indices and bond.atom_indices[1] in r2_indices) or \
+                (bond.atom_indices[1] in r1_indices and bond.atom_indices[0] in r2_indices):
+            # print('Overdefined', bond.atom_indices, 'skipping bond...')
+            continue
+        bond_labels.append(bond.atom_indices)
+
+    # make sure none of the atoms are bonded to something they shouldn't be
+    for label in bond_labels:
+        assert label[1] in get_connected(reaction.ts[direction][0].rmg_molecule, label[0])
+    
+    c_bond = ase.constraints.FixBondLengths(bond_labels)
+    reaction.ts[direction][0].ase_molecule.set_constraint(c_bond)
+    reaction.ts[direction][0].ase_molecule.calc = hfxtb
+
+    opt = ase.optimize.BFGS(reaction.ts[direction][0].ase_molecule, logfile=None)
+    opt.run(fmax=0.02,steps=1500)
+
+    # update the molecule with the new coordinates
+    reaction.ts[direction][0]._ase_molecule = opt.atoms
+    reaction.ts[direction][0].update_coords_from(mol_type="ase")
+
+    # -------------- Write the results as gaussiuan calculations in the shell dir
+    # Check for already finished shell logfiles
+    # first, return if all of them have finished
+    for i in range(0, len(reaction.ts[direction])):
+        opt_label = opt_label[:-8] + f'{i:04}.log'
+
+        ts = reaction.ts[direction][i]
+        gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
+        if opt_type == 'shell':
+            calc = gaussian.get_shell_calc()
+        elif opt_type == 'center':
+            calc = gaussian.get_center_calc()
+        elif opt_type == 'overall':
+            calc = gaussian.get_overall_calc()
+        elif opt_type == 'hfsp':
+            calc = gaussian.get_overall_calc()
+        else:
+            raise ValueError(f'opt_type must be one of shell, center, overall. Got {opt_type}')
+        calc.label = opt_label[:-4]
+        calc.directory = opt_dir
+        calc.parameters.pop('scratch')
+        calc.parameters.pop('multiplicity')
+        calc.parameters['mult'] = ts.rmg_molecule.multiplicity
+        calc.write_input(ts.ase_molecule)
+
+        # Get rid of double-space between xyz block and mod-redundant section
+        delete_double_spaces(os.path.join(opt_dir, calc.label + '.com'))
+
+    # write to the status file to indicate that the conformer screening is complete
+    set_reaction_status(reaction_index, f'{opt_type}_setup', True)
+    reaction_log(reaction_index, f'{opt_type} setup complete')
+    return True
 
 
 if __name__ == '__main__':
