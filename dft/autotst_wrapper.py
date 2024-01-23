@@ -35,7 +35,7 @@ import ase.io.gaussian
 try:
     import xtb.ase.calculator
     # calc = xtb.ase.calculator.XTB()
-except:
+except ImportError:
     print("xtb not installed")
 
 # for rotor scans
@@ -252,8 +252,6 @@ def screen_species_conformers(species_index):
     if get_species_status(species_index, 'screen_conformers'):
         species_log(species_index, 'Conformers already screened')
         return True
-    
-    
 
     conformer_dir = os.path.join(species_dir, 'conformers')
     os.makedirs(conformer_dir, exist_ok=True)
@@ -1071,6 +1069,8 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     # smiles = database_fun.reaction2smiles(rmg_reaction)
     # reaction = autotst.reaction.Reaction(label=smiles)
     reaction.get_labeled_reaction()
+    # TODO - log something about not finding a match if a match isn't found- see reaction #50 for example
+
     reaction.get_label()
     reaction.ts[direction][0].get_molecules()
 
@@ -1231,7 +1231,6 @@ def check_vib_irc(reaction_index, gaussian_logfile):
 
     # rmg_reaction = database_fun.index2reaction(reaction_index)
     # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
-    
 
     va = autotst.calculator.vibrational_analysis.VibrationalAnalysis(
         transitionstate=reaction.ts['forward'][0], log_file=gaussian_logfile
@@ -1540,6 +1539,7 @@ def get_connected(my_molecule, start_index):
     """Function to get the indices of all atoms connected to a particular atom
     Expects and rmg molecule object and the atom index"""
     connected = []
+
     def get_others(start_idx):
         bonds = my_molecule.get_bonds(my_molecule.atoms[start_idx])
         for key in bonds.keys():
@@ -1554,6 +1554,7 @@ def get_connected(my_molecule, start_index):
     get_others(start_index)
     return connected
 
+
 def get_energy_forces_atom_bond(atoms, ind1, ind2, k, deq):
     forces = np.zeros(atoms.positions.shape)
     bd, d = ase.geometry.get_distances([atoms.positions[ind1]], [atoms.positions[ind2]], cell=atoms.cell, pbc=atoms.pbc)
@@ -1565,6 +1566,7 @@ def get_energy_forces_atom_bond(atoms, ind1, ind2, k, deq):
         forces[ind2] = bd
     energy = k * (d - deq) ** 2
     return energy, k * forces
+
 
 def get_energy_forces_site_bond(atoms, ind, site_pos, k, deq):
     forces = np.zeros(atoms.positions.shape)
@@ -1582,13 +1584,13 @@ class HarmonicallyForcedXTB(xtb.ase.calculator.XTB):
     def get_energy_forces(self):
         energy = 0.0
         forces = np.zeros(self.atoms.positions.shape)
-        if hasattr(self.parameters,"atom_bond_potentials"):
+        if hasattr(self.parameters, "atom_bond_potentials"):
             for atom_bond_potential in self.parameters.atom_bond_potentials:
                 E, F = get_energy_forces_atom_bond(self.atoms, **atom_bond_potential)
                 energy += E
                 forces += F
 
-        if hasattr(self.parameters,"site_bond_potentials"):
+        if hasattr(self.parameters, "site_bond_potentials"):
             for site_bond_potential in self.parameters.site_bond_potentials:
                 E, F = get_energy_forces_site_bond(self.atoms, **site_bond_potential)
                 energy += E
@@ -1606,14 +1608,14 @@ class HarmonicallyForcedXTB(xtb.ase.calculator.XTB):
 def get_s(rmg_molecule, a1, a2):
     # returns string describing connectivity of the interacting atoms
     # a1 and a2 are indices
-    
+
     # A0--(A1--A2)--A3
     A0 = ''
     bonds1 = rmg_molecule.get_bonds(rmg_molecule.atoms[a1])
     for key in bonds1.keys():
         if key != rmg_molecule.atoms[a2]:
             A0 = 'R'
-    
+
     A3 = ''
     bonds2 = rmg_molecule.get_bonds(rmg_molecule.atoms[a2])
     for key in bonds2.keys():
@@ -1625,7 +1627,7 @@ def get_s(rmg_molecule, a1, a2):
 def get_dk(dwell, s, dist, hydrogen_interaction):
     # dwell is the distance between breaking bonds (or forming)
     # for Disproportionation, that's 2-4 and (1-4)
-    assert dist == None or dist == 2
+    assert dist is None or dist == 2
     if s in ["--(R--R)--"]:  # nothing connected on either end
         if dist is not None:
             return dwell * 1.25, 100.0
@@ -1654,7 +1656,7 @@ def get_dk(dwell, s, dist, hydrogen_interaction):
 
 def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_conformers=100):
     """Function to set up the gaussian files for HFSP opt.
-    
+
     Not sure if we'll do the same, shell, center, overall method
     To start with, we'll just do a direct "overall optimization"
     """
@@ -1706,7 +1708,6 @@ def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_con
     reaction_log(reaction_index, f'Done generating conformers in AutoTST...')
     reaction_log(reaction_index, f'{len(reaction.ts[direction])} conformers found')
 
-
     # --------------------- Get the Bond distances -----------------------------
     if not reaction.rmg_reaction.family == 'Disproportionation':
         raise NotImplementedError('HFSP opt only implemented for Disproportionation reactions')
@@ -1720,16 +1721,15 @@ def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_con
     atom4_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*4'])
 
     hydrogen_interaction24 = reaction.ts[direction][0].rmg_molecule.atoms[atom2_index].is_hydrogen() or \
-                         reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
+        reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
 
     hydrogen_interaction14 = reaction.ts[direction][0].rmg_molecule.atoms[atom1_index].is_hydrogen() or \
-                         reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
+        reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
 
     # construct the atom bond potentials:
     # For Disproportionation family: this will be between labeled atoms 4-1 and 4-2
     atom_bond_potentials = []
     site_bond_potentials = []
-
 
     # try re-optimizing with a large d_eq, see if anything changes
     deq1, k1 = get_dk(d24, get_s(reaction.ts[direction][0].rmg_molecule, atom2_index, atom4_index), 2, hydrogen_interaction24)
@@ -1768,13 +1768,13 @@ def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_con
     # make sure none of the atoms are bonded to something they shouldn't be
     for label in bond_labels:
         assert label[1] in get_connected(reaction.ts[direction][0].rmg_molecule, label[0])
-    
+
     c_bond = ase.constraints.FixBondLengths(bond_labels)
     reaction.ts[direction][0].ase_molecule.set_constraint(c_bond)
     reaction.ts[direction][0].ase_molecule.calc = hfxtb
 
     opt = ase.optimize.BFGS(reaction.ts[direction][0].ase_molecule, logfile=None)
-    opt.run(fmax=0.02,steps=1500)
+    opt.run(fmax=0.02, steps=1500)
 
     # update the molecule with the new coordinates
     reaction.ts[direction][0]._ase_molecule = opt.atoms
