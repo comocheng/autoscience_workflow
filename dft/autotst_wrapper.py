@@ -30,6 +30,7 @@ import autotst.conformer.utilities
 # import ase.io
 import ase.constraints
 import ase.io.gaussian
+import ase.calculators.lj  # the backup built-in calculator. Do not use it for anything important
 
 # maybe put this in a try block?
 try:
@@ -37,6 +38,12 @@ try:
     # calc = xtb.ase.calculator.XTB()
 except ImportError:
     print("xtb not installed")
+
+try:
+    import hotbit
+except ImportError:
+    print('hotbit not installed')
+
 
 # for rotor scans
 import zmatrix  # https://github.com/wutobias/r2z
@@ -266,18 +273,15 @@ def screen_species_conformers(species_index):
     species_log(species_index, f'Loaded species {species_smiles}')
 
     try:
-        import hotbit
         calc = hotbit.Hotbit()
-    except (ImportError, RuntimeError):
+    except (NameError, RuntimeError):
         # if hotbit fails, use built-in lennard jones
-        import ase.calculators.lj
-        species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+        species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit. DO NOT DO THIS')
         calc = ase.calculators.lj.LennardJones()
     # hotbit can't handle Ar, He, change calculator to lj if it's in the species
     hotbit_skiplist = ['AR', 'HE', 'NE']
     for element in hotbit_skiplist:
         if element in species_smiles.upper():
-            import ase.calculators.lj
             species_log(species_index, f'Using built-in ase LennardJones calculator instead of Hotbit for {element}')
             calc = ase.calculators.lj.LennardJones()
             break
@@ -1008,14 +1012,18 @@ def delete_double_spaces(gaussian_com_file):
 def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, max_conformers=100):
     """Function to set up the gaussian files for a particular opt type
     screens the conformers using hotbit, then writes the gaussian input files
-    types are 'shell', 'center', 'overall'
+    types are 'shell', 'center', 'overall', 'hfsp', 'hfsp_shell', 'hfsp_overall'
 
     shell freezes 3 core atoms of reaction and relaxes the rest of the molecule
     center optimizes 3 core atoms of reaction to TS and freezes the rest of the molecule
     overall optimizes the entire molecule to TS
+
+    hfsp - harmonically forced saddle point runs a TS optimization from initial HFSP guess
+    hfsp_shell - freeze the 3 core atoms and relax molecule using HFSP initial guess
+    hfsp_overall - use the result of hfsp to run TS optimization
     """
 
-    assert opt_type in ['shell', 'center', 'overall'], f'opt_type must be one of shell, center, overall. Got {opt_type}'
+    assert opt_type in ['shell', 'center', 'overall', 'hfsp', 'hfsp_shell', 'hfsp_overall'], f'opt_type must be one of shell, center, overall, hfsp, hfsp_shell, hfsp_overall. Got {opt_type}'
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     if not os.path.exists(reaction_dir):
@@ -1025,7 +1033,8 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         os.makedirs(screen_dir, exist_ok=True)
     reaction_log(reaction_index, f'Starting {opt_type} opt job')
 
-    # check if the opt setup is already complete
+    # TODO - I don't like this status system. (get_reaction_status) A status file is not the actual status and the extra layer makes things worse. Get rid of it
+    # check if the opt setup is already complete. But there should be some time-saving check before running autotst
     if get_reaction_status(reaction_index, f'{opt_type}_setup') or \
        get_reaction_status(reaction_index, f'{opt_type}_opt'):
         reaction_log(reaction_index, f'{opt_type} opt setup complete')
@@ -1041,6 +1050,7 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
 
     # don't run center if shell isn't complete and
     # don't run overall if center isn't complete
+    # don't run hfsp_overall if hfsp_shell isn't complete
     if opt_type == 'center':
         shell_dir = os.path.join(reaction_dir, 'shell')
         if get_reaction_status(reaction_index, 'shell_opt'):
@@ -1059,6 +1069,15 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         else:
             reaction_log(reaction_index, f'Overall opt setup incomplete, center opt not complete')
             return False
+    elif opt_type == 'hfsp_overall':
+        hfsp_shell_dir = os.path.join(reaction_dir, 'hfsp_shell')
+        if get_reaction_status(reaction_index, 'hfsp_shell_opt'):
+            pass
+        elif conformers_done_optimizing(hfsp_shell_dir, base_name=opt_label[:-8]):
+            set_reaction_status(reaction_index, 'hfsp_shell_opt', True)
+        else:
+            reaction_log(reaction_index, f'Cannot run hfsp_overall opt setup because hfsp_shell opt not complete')
+            return False
 
     # ------------------ Use Hotbit to screen the conformers ------------------
     # Get reaction from index
@@ -1075,12 +1094,13 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     reaction.ts[direction][0].get_molecules()
 
     try:  # TODO fix issues with import in a try block
-        import hotbit
         calc = hotbit.Hotbit()
-    except (ImportError, RuntimeError):
+    except (NameError, RuntimeError):
         # if hotbit fails, use built-in lennard jones
-        import ase.calculators.lj
         reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
+        # If we're on Discovery, you need to abort this. This is bad.
+        if job_manager.get_user() == 'harris.se':
+            raise ImportError('You really need to use Hotbit or xtb. LJ is not good enough sorry')
         calc = ase.calculators.lj.LennardJones()
     reaction.generate_conformers(
         ase_calculator=calc,
@@ -1096,15 +1116,47 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     # Check for already finished shell logfiles
     # first, return if all of them have finished
     for i in range(0, len(reaction.ts[direction])):
+        if i > max_conformers:
+            reaction_log(reaction_index, f'Maximum conformers reached ({max_conformers}). Moving on...')
+            break
+
         opt_label = opt_label[:-8] + f'{i:04}.log'
 
         ts = reaction.ts[direction][i]
+
+        # -------- Adjust the starting geometry to result of previous run if applicable --------------
+        if opt_type in ['hfsp' or 'hfsp_shell']:
+            # Use HFSP to come up with the TS starting geometry
+            if not reaction.rmg_reaction.family == 'Disproportionation':
+                raise NotImplementedError('HFSP opt only implemented for Disproportionation reactions')
+            d14, d24 = get_HFSP_bond_distances(reaction)  # <---- this takes a while and is the same for each conformer so only run once
+            new_ase_molecule = get_HFSP_TS_guess(reaction, d12, d24, i)
+
+            # update the molecule with the new coordinates
+            reaction.ts[direction][i]._ase_molecule = new_ase_molecule
+            reaction.ts[direction][i].update_coords_from(mol_type="ase")
+        elif opt_type == 'hfsp_overall':
+            # set the geometry to hfsp_shell result
+            starting_geometry_file = os.path.join(hfsp_shell_dir, opt_label)
+            reaction.ts[direction][i]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
+            reaction.ts[direction][i].update_coords_from(mol_type="ase")
+        elif opt_type == 'center':
+            # set the geometry to shell result
+            starting_geometry_file = os.path.join(shell_dir, opt_label)
+            reaction.ts[direction][i]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
+            reaction.ts[direction][i].update_coords_from(mol_type="ase")
+        elif opt_type == 'overall':
+            # set the geometry to shell result
+            starting_geometry_file = os.path.join(center_dir, opt_label)
+            reaction.ts[direction][i]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
+            reaction.ts[direction][i].update_coords_from(mol_type="ase")
+
         gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
-        if opt_type == 'shell':
+        if opt_type in ['shell', 'hfsp_shell']:
             calc = gaussian.get_shell_calc()
         elif opt_type == 'center':
             calc = gaussian.get_center_calc()
-        elif opt_type == 'overall':
+        elif opt_type in ['overall', 'hfsp_overall']:
             calc = gaussian.get_overall_calc()
         else:
             raise ValueError(f'opt_type must be one of shell, center, overall. Got {opt_type}')
@@ -1129,7 +1181,7 @@ def run_opt(reaction_index, opt_type, direction='forward'):
     opt_type can be 'shell', 'center', or 'overall'
     and now, HFSP
     """
-    assert opt_type in ['shell', 'center', 'overall', 'hfsp']
+    assert opt_type in ['shell', 'center', 'overall', 'hfsp', 'hfsp_shell', 'hfsp_overall']
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     opt_dir = os.path.join(reaction_dir, opt_type)
@@ -1654,77 +1706,24 @@ def get_dk(dwell, s, dist, hydrogen_interaction):
                 return dwell * 1.4, 100.0
 
 
-def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_conformers=100):
-    """Function to set up the gaussian files for HFSP opt.
-
-    Not sure if we'll do the same, shell, center, overall method
-    To start with, we'll just do a direct "overall optimization"
+def get_HFSP_TS_guess(reaction, d12, d24, conformer_index):
+    """Function to get the positions for an HFSP guess
+    Takes in an autotst.reaction.Reaction object and returns the ase molecule
+    # right now this only works on the first conformer
     """
 
-    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
-    if not os.path.exists(reaction_dir):
-        os.makedirs(reaction_dir, exist_ok=True)
-    screen_dir = os.path.join(reaction_dir, 'screen')
-    if not os.path.exists(screen_dir):
-        os.makedirs(screen_dir, exist_ok=True)
-    opt_type = 'hfsp'
-    reaction_log(reaction_index, f'Starting {opt_type} opt job')
-
-    screen_dir = os.path.join(reaction_dir, 'screen')
-    opt_dir = os.path.join(reaction_dir, opt_type)
-    os.makedirs(opt_dir, exist_ok=True)
-
-    opt_label = 'fwd_ts_0000.log'
-    if direction == 'reverse':
-        opt_label = 'rev_ts_0000.log'
-
-    # ------------------ Use Hotbit to screen the conformers ------------------
-    # Get reaction from index
-    rmg_reaction = database_fun.index2reaction(reaction_index)
-    reaction_log(reaction_index, f'Constructing reaction in AutoTST...')
-    # Note that AutoTST uses SMILES instead of adjacency list, but we'll worry about that later
-    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
-    # smiles = database_fun.reaction2smiles(rmg_reaction)
-    # reaction = autotst.reaction.Reaction(label=smiles)
-    reaction.get_labeled_reaction()
-    reaction.get_label()
-    reaction.ts[direction][0].get_molecules()
-
-    try:  # TODO fix issues with import in a try block
-        import hotbit
-        calc = hotbit.Hotbit()
-    except (ImportError, RuntimeError):
-        # if hotbit fails, use built-in lennard jones
-        import ase.calculators.lj
-        reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit. Do not do this for the actual calculation because LJ sucks at geometry optimization')
-        calc = ase.calculators.lj.LennardJones()
-    reaction.generate_conformers(
-        ase_calculator=calc,
-        max_combos=max_combos,
-        max_conformers=max_conformers,
-        save_results=True,
-        results_dir=screen_dir,
-    )
-    reaction_log(reaction_index, f'Done generating conformers in AutoTST...')
-    reaction_log(reaction_index, f'{len(reaction.ts[direction])} conformers found')
-
-    # --------------------- Get the Bond distances -----------------------------
-    if not reaction.rmg_reaction.family == 'Disproportionation':
-        raise NotImplementedError('HFSP opt only implemented for Disproportionation reactions')
-    d14, d24 = get_HFSP_bond_distances(reaction)
-
-    atom_labels = reaction.ts[direction][0].rmg_molecule.get_all_labeled_atoms()
+    atom_labels = reaction.ts[direction][conformer_index].rmg_molecule.get_all_labeled_atoms()
     # for Disproportionation it's 2-4 breaks and 1-4 forms
-    atom1_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*1'])
-    atom2_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*2'])
-    atom3_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*3'])
-    atom4_index = reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*4'])
+    atom1_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*1'])
+    atom2_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*2'])
+    atom3_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*3'])
+    atom4_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*4'])
 
-    hydrogen_interaction24 = reaction.ts[direction][0].rmg_molecule.atoms[atom2_index].is_hydrogen() or \
-        reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
+    hydrogen_interaction24 = reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom2_index].is_hydrogen() or \
+        reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom4_index].is_hydrogen
 
-    hydrogen_interaction14 = reaction.ts[direction][0].rmg_molecule.atoms[atom1_index].is_hydrogen() or \
-        reaction.ts[direction][0].rmg_molecule.atoms[atom4_index].is_hydrogen
+    hydrogen_interaction14 = reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom1_index].is_hydrogen() or \
+        reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom4_index].is_hydrogen
 
     # construct the atom bond potentials:
     # For Disproportionation family: this will be between labeled atoms 4-1 and 4-2
@@ -1732,21 +1731,21 @@ def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_con
     site_bond_potentials = []
 
     # try re-optimizing with a large d_eq, see if anything changes
-    deq1, k1 = get_dk(d24, get_s(reaction.ts[direction][0].rmg_molecule, atom2_index, atom4_index), 2, hydrogen_interaction24)
-    deq2, k2 = get_dk(d14, get_s(reaction.ts[direction][0].rmg_molecule, atom1_index, atom4_index), None, hydrogen_interaction14)
+    deq1, k1 = get_dk(d24, get_s(reaction.ts[direction][conformer_index].rmg_molecule, atom2_index, atom4_index), 2, hydrogen_interaction24)
+    deq2, k2 = get_dk(d14, get_s(reaction.ts[direction][conformer_index].rmg_molecule, atom1_index, atom4_index), None, hydrogen_interaction14)
     atom_bond_potentials = [
         {"ind1": atom1_index, "ind2": atom4_index, "k": k1, "deq": deq1},
         {"ind1": atom4_index, "ind2": atom2_index, "k": k2, "deq": deq2},
     ]
 
     # see if anything is bonded to *1, if so, add a soft repelling harmonic potential between it and *2
-    bonds1 = reaction.ts[direction][0].rmg_molecule.get_bonds(reaction.ts[direction][0].rmg_molecule.atoms[atom1_index])
+    bonds1 = reaction.ts[direction][conformer_index].rmg_molecule.get_bonds(reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom1_index])
     if bonds1:
-        key = bonds1.keys()[0]
-        repel_index1 = reaction.ts[direction][0].rmg_molecule.atoms.index(key)
-        repel_index2 = atom2_index
-        atom_bond_potentials.append({"ind1": repel_index1, "ind2": repel_index2, "k": 0.1, "deq": 7})
-
+        for key in bonds1.keys():
+            repel_index1 = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(key)
+            repel_index2 = atom2_index
+            atom_bond_potentials.append({"ind1": repel_index1, "ind2": repel_index2, "k": 0.1, "deq": 7})
+            break
     # ------------------ Set up the HFSP run --------------------------
     hfxtb = HarmonicallyForcedXTB(
         method="GFN1-xTB",
@@ -1754,11 +1753,11 @@ def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_con
         site_bond_potentials=site_bond_potentials
     )
 
-    r1_indices = get_connected(reaction.ts[direction][0].rmg_molecule, reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*4']))
-    r2_indices = get_connected(reaction.ts[direction][0].rmg_molecule, reaction.ts[direction][0].rmg_molecule.atoms.index(atom_labels['*1']))
+    r1_indices = get_connected(reaction.ts[direction][conformer_index].rmg_molecule, reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*4']))
+    r2_indices = get_connected(reaction.ts[direction][conformer_index].rmg_molecule, reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*1']))
 
     bond_labels = []
-    for bond in reaction.ts[direction][0].get_bonds()[:-1]:
+    for bond in reaction.ts[direction][conformer_index].get_bonds()[:-1]:
         if (bond.atom_indices[0] in r1_indices and bond.atom_indices[1] in r2_indices) or \
                 (bond.atom_indices[1] in r1_indices and bond.atom_indices[0] in r2_indices):
             # print('Overdefined', bond.atom_indices, 'skipping bond...')
@@ -1767,51 +1766,15 @@ def setup_HFSP_opt(reaction_index, direction='forward', max_combos=1000, max_con
 
     # make sure none of the atoms are bonded to something they shouldn't be
     for label in bond_labels:
-        assert label[1] in get_connected(reaction.ts[direction][0].rmg_molecule, label[0])
+        assert label[1] in get_connected(reaction.ts[direction][conformer_index].rmg_molecule, label[0])
 
     c_bond = ase.constraints.FixBondLengths(bond_labels)
-    reaction.ts[direction][0].ase_molecule.set_constraint(c_bond)
-    reaction.ts[direction][0].ase_molecule.calc = hfxtb
+    reaction.ts[direction][conformer_index].ase_molecule.set_constraint(c_bond)
+    reaction.ts[direction][conformer_index].ase_molecule.calc = hfxtb
 
-    opt = ase.optimize.BFGS(reaction.ts[direction][0].ase_molecule, logfile=None)
+    opt = ase.optimize.BFGS(reaction.ts[direction][conformer_index].ase_molecule, logfile=None)
     opt.run(fmax=0.02, steps=1500)
-
-    # update the molecule with the new coordinates
-    reaction.ts[direction][0]._ase_molecule = opt.atoms
-    reaction.ts[direction][0].update_coords_from(mol_type="ase")
-
-    # -------------- Write the results as gaussiuan calculations in the shell dir
-    # Check for already finished shell logfiles
-    # first, return if all of them have finished
-    for i in range(0, len(reaction.ts[direction])):
-        opt_label = opt_label[:-8] + f'{i:04}.log'
-
-        ts = reaction.ts[direction][i]
-        gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
-        if opt_type == 'shell':
-            calc = gaussian.get_shell_calc()
-        elif opt_type == 'center':
-            calc = gaussian.get_center_calc()
-        elif opt_type == 'overall':
-            calc = gaussian.get_overall_calc()
-        elif opt_type == 'hfsp':
-            calc = gaussian.get_overall_calc()
-        else:
-            raise ValueError(f'opt_type must be one of shell, center, overall. Got {opt_type}')
-        calc.label = opt_label[:-4]
-        calc.directory = opt_dir
-        calc.parameters.pop('scratch')
-        calc.parameters.pop('multiplicity')
-        calc.parameters['mult'] = ts.rmg_molecule.multiplicity
-        calc.write_input(ts.ase_molecule)
-
-        # Get rid of double-space between xyz block and mod-redundant section
-        delete_double_spaces(os.path.join(opt_dir, calc.label + '.com'))
-
-    # write to the status file to indicate that the conformer screening is complete
-    set_reaction_status(reaction_index, f'{opt_type}_setup', True)
-    reaction_log(reaction_index, f'{opt_type} setup complete')
-    return True
+    return opt.atoms
 
 
 if __name__ == '__main__':
