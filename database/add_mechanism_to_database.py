@@ -14,6 +14,11 @@ import importlib
 
 # Load New Mechanism
 chemkin = sys.argv[1]
+if os.path.isdir(chemkin):
+    chemkin = os.path.join(chemkin, 'chem_annotated.inp')
+elif chemkin.endswith('.yaml'):
+    chemkin = chemkin.replace('.inp')
+
 new_model_dir = os.path.dirname(chemkin)
 # assumes species dictionary etc have the following names:
 species_dict = os.path.join(new_model_dir, 'species_dictionary.txt')
