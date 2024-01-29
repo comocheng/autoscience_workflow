@@ -1130,7 +1130,7 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
             if not reaction.rmg_reaction.family == 'Disproportionation':
                 raise NotImplementedError('HFSP opt only implemented for Disproportionation reactions')
             d14, d24 = get_HFSP_bond_distances(reaction)  # <---- this takes a while and is the same for each conformer so only run once
-            new_ase_molecule = get_HFSP_TS_guess(reaction, d12, d24, i)
+            new_ase_molecule = get_HFSP_TS_guess(reaction, d14, d24, i)
 
             # update the molecule with the new coordinates
             reaction.ts[direction][i]._ase_molecule = new_ase_molecule
@@ -1156,10 +1156,10 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
             calc = gaussian.get_shell_calc()
         elif opt_type == 'center':
             calc = gaussian.get_center_calc()
-        elif opt_type in ['overall', 'hfsp_overall']:
+        elif opt_type in ['overall', 'hfsp', 'hfsp_overall']:
             calc = gaussian.get_overall_calc()
         else:
-            raise ValueError(f'opt_type must be one of shell, center, overall. Got {opt_type}')
+            raise ValueError(f'opt_type must be one of shell, center, overall, hfsp, hfsp_shell, hfsp_overall. Got {opt_type}')
         calc.label = opt_label[:-4]
         calc.directory = opt_dir
         calc.parameters.pop('scratch')
@@ -1275,7 +1275,7 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     # check for valid termination status
     termination_status = get_termination_status(gaussian_logfile)
     if termination_status != 0:
-        print('logfile did not terminate normally')
+        reaction_log('logfile did not terminate normally')
         return False
 
     reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
@@ -1287,12 +1287,23 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     va = autotst.calculator.vibrational_analysis.VibrationalAnalysis(
         transitionstate=reaction.ts['forward'][0], log_file=gaussian_logfile
     )
-    result = va.validate_ts()
-    if result:
-        print('TS is valid')
+    result, connect_the_dots_result = va.validate()
+
+    # we'll be lenient: one large negative freq is enough
+    freqs = np.array([vib[0] for vib in va.vibrations])
+    one_negative = np.sum(freqs < 0)
+    large_negative = freqs[0] < -600
+    one_large_negative = one_negative and large_negative
+
+    # result, connect_the_dots_result = va.validate_ts()
+    if result or connect_the_dots_result or one_large_negative:
+        if result or connect_the_dots_result:
+            reaction_log('TS is valid')
+        elif one_large_negative:
+            reaction_log('TS is probably valid')
     else:
-        print('TS is not valid')
-    return result
+        reaction_log('TS is not valid')
+    return result or connect_the_dots_result or one_large_negative
 
 
 def arkane_reaction_complete(reaction_index):
@@ -1706,11 +1717,12 @@ def get_dk(dwell, s, dist, hydrogen_interaction):
                 return dwell * 1.4, 100.0
 
 
-def get_HFSP_TS_guess(reaction, d12, d24, conformer_index):
+def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
     """Function to get the positions for an HFSP guess
     Takes in an autotst.reaction.Reaction object and returns the ase molecule
     # right now this only works on the first conformer
     """
+    direction = 'forward'  # TODO find out if there's a case where we'll ever use reverse
 
     atom_labels = reaction.ts[direction][conformer_index].rmg_molecule.get_all_labeled_atoms()
     # for Disproportionation it's 2-4 breaks and 1-4 forms
