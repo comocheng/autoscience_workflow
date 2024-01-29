@@ -95,15 +95,14 @@ while True:  # this will just run until the job gets deleted or it runs out of t
             pass
 
         # Check if already complete
-        try:
-            if top_calculations[i]['complete']:
+        # need to look for the file directly
+        if autotst_wrapper.arkane_reaction_complete(idx):
+            try:
                 printlog(f'{top_calculations[i]["type"]} {idx} {top_calculations[i]["name"]} already ran. Skipping...')
-                with open(calculation_list_file, 'w') as f:
-                    yaml.dump(top_calculations, f)
                 i += 1
                 continue
-        except KeyError:
-            top_calculations[i]['complete'] = False
+            except KeyError:
+                pass
 
         # -------------------------- Calculate Species ----------------------------- #
         if top_calculations[i]['type'] == 'species':
