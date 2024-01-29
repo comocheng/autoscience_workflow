@@ -1,0 +1,93 @@
+# script to automatically run reaction all of the post-processing from the RMG run
+#
+# 1. Add the new species/reactions to the database
+# 2. Get species delays
+# 3. Run base sensitivity (do species first)
+# 4. Run reaction sensitivity
+
+import os
+import sys
+import time
+import datetime
+import subprocess
+import job_manager
+
+
+skip_add_mech = True
+
+working_dir = sys.argv[1]
+if working_dir.endswith('.inp'):
+    working_dir = os.path.dirname(working_dir)
+elif working_dir.endswith('.yaml'):
+    working_dir = os.path.dirname(working_dir)
+chemkin_file = os.path.join(working_dir, 'chem_annotated.inp')
+
+start_dir = os.getcwd()
+os.chdir(working_dir)
+
+logfile = os.path.join(working_dir, 'analysis.log')
+
+
+def printlog(message):
+    """Function to print log messages to the official log file and stdout"""
+    print(f'{datetime.datetime.now()} {message}')
+    with open(logfile, 'a') as f:
+        f.write(f'{datetime.datetime.now()} {message}' + '\n')
+
+
+# Step 1. Add the mechanism to the database
+if not skip_add_mech:
+    printlog(f'Launching Add Mechanism to Database')
+    add_mech_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/database/run_add_mech_to_db.sh'
+    job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {add_mech_script} {chemkin_file}"
+    job.submit(slurm_cmd)
+    time.sleep(2.0)
+    job.wait(check_interval=1.0)
+
+    printlog(f'Done adding Mechanism to Database')
+else:
+    printlog('skipping add mechanism to database')
+
+# Step 2. Run the species delays if they're not all done
+if not os.path.exists(os.path.join(working_dir, 'table_0007', 'species_delays_0007.npy')):
+    printlog('Running the species delays')
+    run_species_delays_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_sp_delays.sh'
+    job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {run_species_delays_script} {chemkin_file}"
+    job.submit(slurm_cmd)
+    time.sleep(2.0)
+    job.wait(check_interval=10.0)
+    printlog(f'Done running species delays')
+else:
+    printlog('Species delays already ran')
+
+
+# Step 3. Run the base delays if they're not all done
+if not os.path.exists(os.path.join(working_dir, 'table_0007', 'base_delays_0007.npy')):
+    printlog('Running the base delays')
+    run_base_delays_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_base_delays.sh'
+    job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {run_base_delays_script} {chemkin_file}"
+    job.submit(slurm_cmd)
+    time.sleep(2.0)
+    job.wait(check_interval=10.0)
+    printlog(f'Done running base delays')
+else:
+    printlog('Base delays already ran')
+
+
+# Step 4. Run the reaction delays if they're not all done
+if not os.path.exists(os.path.join(working_dir, 'table_0007', 'reaction_delays_0007_1200.npy')):
+    printlog('Running the base delays')
+    run_rxn_delays_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_rxn_delay_parallel_table7.sh'
+    job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {run_rxn_delays_script} {chemkin_file}"
+    job.submit(slurm_cmd)
+    time.sleep(2.0)
+    job.wait(check_interval=10.0)
+    printlog(f'Done running reaction delays')
+else:
+    printlog('Reaction delays already ran')
+
+os.chdir(start_dir)

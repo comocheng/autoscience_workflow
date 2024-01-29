@@ -1275,7 +1275,7 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     # check for valid termination status
     termination_status = get_termination_status(gaussian_logfile)
     if termination_status != 0:
-        reaction_log('logfile did not terminate normally')
+        reaction_log(reaction_index, 'logfile did not terminate normally')
         return False
 
     reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
@@ -1298,11 +1298,11 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     # result, connect_the_dots_result = va.validate_ts()
     if result or connect_the_dots_result or one_large_negative:
         if result or connect_the_dots_result:
-            reaction_log('TS is valid')
+            reaction_log(reaction_index, 'TS is valid')
         elif one_large_negative:
-            reaction_log('TS is probably valid')
+            reaction_log(reaction_index, 'TS is probably valid')
     else:
-        reaction_log('TS is not valid')
+        reaction_log(reaction_index, 'TS is not valid')
     return result or connect_the_dots_result or one_large_negative
 
 
