@@ -4,6 +4,7 @@
 # 2. Get species delays
 # 3. Run base sensitivity (do species first)
 # 4. Run reaction sensitivity
+# 5. Compile everything into one big .npy
 
 import os
 import sys
@@ -89,5 +90,15 @@ if not os.path.exists(os.path.join(working_dir, 'table_0007', 'reaction_delays_0
     printlog(f'Done running reaction delays')
 else:
     printlog('Reaction delays already ran')
+
+# Step 5. Compile the sensitivity
+printlog('Compiling sensitivity results')
+compile_sensitivity_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/compile_sensitivity.sh'
+job = job_manager.SlurmJob()
+slurm_cmd = f"sbatch {compile_sensitivity_script} {chemkin_file}"
+job.submit(slurm_cmd)
+time.sleep(2.0)
+job.wait(check_interval=10.0)
+printlog(f'Done compiling sensitivity results')
 
 os.chdir(start_dir)
