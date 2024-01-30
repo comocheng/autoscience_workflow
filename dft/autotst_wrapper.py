@@ -508,7 +508,7 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
             f.write(line + '\n')
 
 
-def setup_rotors(species_index):
+def setup_rotors(species_index, increment_deg=20):
     """Find the lowest energy conformer of the species and then set up Gaussian rotors calculations
     """
     if arkane_species_complete(species_index):
@@ -519,12 +519,18 @@ def setup_rotors(species_index):
     rotor_dir = os.path.join(species_dir, 'rotors')
     os.makedirs(rotor_dir, exist_ok=True)
 
+    standard_increment = True
+    rotor_str = 'rotor'
+    if increment_deg != 20:
+        standard_increment = False
+        rotor_str = f'rotor{int(increment_deg)}'
+        species_log(species_index, f'Non-standard rotor increment {increment_deg}')
+
     # check if the rotors were already set up
-    rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.com'))
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
     if rotor_logfiles:
         species_log(species_index, 'Rotors already set up')
         return True
-
     species_log(species_index, f'Starting species rotor setup')
 
     # # ------------------ Use Hotbit to screen the conformers ------------------
@@ -573,13 +579,12 @@ def setup_rotors(species_index):
 
     print("generating gaussian input files")
     for i, torsion in enumerate(new_cf.torsions):
-
-        fname = os.path.join(rotor_dir, f'rotor_{i:04}.com')
-        write_scan_file(fname, new_cf, i)
+        fname = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.com')
+        write_scan_file(fname, new_cf, i, degree_delta=increment_deg)
     return True
 
 
-def run_rotors(species_index):
+def run_rotors(species_index, increment_deg=20):
     """Run the rotor scans that were set up"""
     if arkane_species_complete(species_index):
         return True
@@ -593,29 +598,37 @@ def run_rotors(species_index):
         species_log(species_index, f'No rotors to run. Skipping...')
         return True
 
+    standard_increment = True
+    rotor_str = 'rotor'
+    suffix = ''
+    if increment_deg != 20:
+        standard_increment = False
+        rotor_str = f'rotor{int(increment_deg)}'
+        suffix = f'{int(increment_deg)}'
+
     # check if the rotors were already completed (might setup rerun even if already ran once)
-    if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name='rotor_'):
+    if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name=f'{rotor_str}_'):
         return True  # already ran
 
     species_log(species_index, f'Counting incomplete rotor scans...')
-    n_rotors = len(glob.glob(os.path.join(rotor_dir, 'rotor_*.com')))
     rerun_indices = []
+    n_rotors = len(glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com')))
     for i in range(0, n_rotors):
-        rotor_logfile = os.path.join(rotor_dir, f'rotor_{i:04}.log')
+        rotor_logfile = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.log')
         if os.path.exists(rotor_logfile):
             termination_status = get_termination_status(rotor_logfile)
             if termination_status == 1 or termination_status == -1:
                 rerun_indices.append(i)
                 species_log(species_index, f'Rotor {i} did not complete')
 
-    rotor_logfiles = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.log'))
     if len(rotor_logfiles) == n_rotors and not rerun_indices:
         species_log(species_index, 'Rotors already ran')
         return True
 
     species_log(species_index, f'Starting rotor scans optimization job')
     # Make slurm script to run all the rotor calculations
-    slurm_run_file = os.path.join(rotor_dir, 'run.sh')
+    slurm_run_file = os.path.join(rotor_dir, f'run{suffix}.sh')
     slurm_settings = {
         '--job-name': f'g16_rot_{species_index}',
         '--error': 'error.log',
@@ -628,7 +641,7 @@ def run_rotors(species_index):
         '--array': f'0-{n_rotors - 1}%30',
     }
     if rerun_indices:
-        slurm_run_file = os.path.join(rotor_dir, 'rerun.sh')
+        slurm_run_file = os.path.join(rotor_dir, f'rerun{suffix}.sh')
         slurm_settings['--partition'] = 'short'
         slurm_settings['--constraint'] = 'cascadelake'
         slurm_settings['--array'] = ordered_array_str(rerun_indices)
@@ -646,7 +659,7 @@ def run_rotors(species_index):
         'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
 
         'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-        'fname="rotor_${RUN_i}.com"\n\n',
+        'fname="' + rotor_str + '_${RUN_i}.com"\n\n',
 
         'g16 $fname\n',
     ]
