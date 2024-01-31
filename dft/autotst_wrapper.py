@@ -1151,16 +1151,22 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         elif opt_type == 'hfsp_overall':
             # set the geometry to hfsp_shell result
             starting_geometry_file = os.path.join(hfsp_shell_dir, opt_label)
+            if not os.path.exists(starting_geometry_file) or get_termination_status(starting_geometry_file) != 0:
+                continue  # could just pass over this, but it seems like a waste of computation time to run the calc
             reaction.ts[direction][i]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
             reaction.ts[direction][i].update_coords_from(mol_type="ase")
         elif opt_type == 'center':
             # set the geometry to shell result
             starting_geometry_file = os.path.join(shell_dir, opt_label)
+            if not os.path.exists(starting_geometry_file) or get_termination_status(starting_geometry_file) != 0:
+                continue
             reaction.ts[direction][i]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
             reaction.ts[direction][i].update_coords_from(mol_type="ase")
         elif opt_type == 'overall':
             # set the geometry to shell result
             starting_geometry_file = os.path.join(center_dir, opt_label)
+            if not os.path.exists(starting_geometry_file) or get_termination_status(starting_geometry_file) != 0:
+                continue
             reaction.ts[direction][i]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
             reaction.ts[direction][i].update_coords_from(mol_type="ase")
 
