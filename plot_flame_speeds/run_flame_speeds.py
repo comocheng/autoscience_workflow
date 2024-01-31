@@ -18,22 +18,8 @@ slope = 0.25
 curve = 0.27
 
 gas = ct.Solution(cti_path)
-
-
-this_dir = os.path.dirname(__file__)
-mechs = {
-    'AramcoMech3.0': 'aramco',
-    'chem_annotated': 'base_rmg',
-    'chem_annotated.': 'base_rmg',
-    'cutoff3_20230113': 'improved_model',
-    'cutoff3_20230418': 'improved_model',
-    'cutoff3_20230113.': 'improved_model',
-    'cutoff3_20230418.': 'improved_model',
-}
-
-save_dir = os.path.join(this_dir, mechs[os.path.basename(cti_path)[:-4]])
-os.makedirs(save_dir, exist_ok=True)
-
+working_dir = os.path.dirname(cti_path)
+save_dir = working_dir
 
 # load the experimental conditions
 flame_speed_data = '/work/westgroup/harris.se/autoscience/autoscience/butane/experimental_data/butane_flamespeeds.csv'
@@ -46,8 +32,8 @@ data_slice = df_exp[df_exp['Reference'] == 'Park et al. 2016']
 speeds = data_slice['SL0 (cm/s)'].values.astype(float)  # ignition delay
 temperatures = data_slice['Tu (K)'].values  # Temperatures
 pressures = data_slice['Pu (atm)'].values * ct.one_atm  # pressures in atm
-equiv_ratios = data_slice['Equivalence Ratio'].values  # equivalence ratio
-
+# equiv_ratios = data_slice['Equivalence Ratio'].values  # equivalence ratio
+equiv_ratios = np.linspace(0.6, 2.0, 51)
 
 # list of starting conditions
 # Define stoichiometric coefficients
@@ -87,7 +73,6 @@ def run_flame_speed(condition_index):
     if 'Ar' not in gas.species_names and 'Ar' in concentrations[condition_index].keys():
         concentrations[condition_index]['AR'] = concentrations[condition_index].pop('Ar')
 
-
     gas.TPX = temperatures[condition_index], pressures[condition_index], concentrations[condition_index]
 
     tol_ss = [1.0e-13, 1.0e-9]  # abs and rel tolerances for steady state problem
@@ -99,7 +84,7 @@ def run_flame_speed(condition_index):
     flame.flame.set_transient_tolerances(default=tol_ts)
     flame.set_refine_criteria(ratio=5, slope=0.25, curve=0.27)
     flame.max_time_step_count = 5000
-    #flame.max_time_step_count = 900
+    # flame.max_time_step_count = 900
     loglevel = 1
 
     print("about to solve")
@@ -107,7 +92,7 @@ def run_flame_speed(condition_index):
     Su = flame.velocity[0]
 
     print("Save CSV")
-    #csv_filepath = os.path.join(os.path.dirname(cti_path), f"flame_{condition_index}.csv")
+    # csv_filepath = os.path.join(os.path.dirname(cti_path), f"flame_{condition_index}.csv")
     csv_filepath = os.path.join(save_dir, f"flame_{condition_index}.csv")
     flame.write_csv(csv_filepath)
 
@@ -115,28 +100,15 @@ def run_flame_speed(condition_index):
     yaml_filepath = os.path.join(save_dir, f"flame_{condition_index}.yaml")
     flame.save(yaml_filepath, name="solution", description="Initial methane flame")
 
-    
     return Su
 
 
 # Run all simulations in parallel
 flame_speeds = np.zeros(len(data_slice))
 condition_indices = np.arange(0, len(data_slice))
-with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
+with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
     for condition_index, flame_speed in zip(condition_indices, executor.map(run_flame_speed, condition_indices)):
         flame_speeds[condition_index] = flame_speed
 
-
 out_df = pd.DataFrame(flame_speeds)
-# out_df.to_csv('aramco_flame_speeds.csv')
-
-# out_df.to_csv('naive_improved_flame_speeds.csv')
-# out_df.to_csv('rmg_changed_flame_speeds.csv')
-#out_df.to_csv(f'{cti_path[:-4]}.csv')
-#out_df.to_csv(f'{os.path.join(this_dir, os.path.basename(cti_path))[:-4]}.csv')
-if cti_path[-4:] == 'yaml':
-    # out_df.to_csv(f'{os.path.join(save_dir, os.path.basename(cti_path))[:-4]}.csv')  # yml
-    out_df.to_csv(f'{os.path.join(save_dir, os.path.basename(cti_path))[:-5]}.csv')  # yaml
-else:
-    out_df.to_csv(f'{os.path.join(save_dir, os.path.basename(cti_path))[:-4]}.csv')  # yaml
-
+out_df.to_csv(os.path.join(working_dir, 'flames.csv'))
