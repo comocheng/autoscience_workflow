@@ -1329,8 +1329,9 @@ def arkane_reaction_complete(reaction_index):
     return os.path.exists(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'arkane', 'RMG_libraries', 'reactions.py'))
 
 
-def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False):
+def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False, overall_dirname='overall'):
     """Function to setup the arkane job for a reaction
+    overall_dirname is where to get the TS logs from, alternatives are 'hfsp' and 'hfsp_overall'
     """
     # check if the arkane job was already completed
     if get_reaction_status(reaction_index, 'arkane_calc'):
@@ -1351,7 +1352,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     reaction_log(reaction_index, f'starting setup_arkane_reaction for reaction {reaction_index} {reaction_smiles}')
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
-    overall_dir = os.path.join(reaction_dir, 'overall')
+    overall_dir = os.path.join(reaction_dir, overall_dirname)
     arkane_dir = os.path.join(reaction_dir, 'arkane')
     os.makedirs(arkane_dir, exist_ok=True)
 
