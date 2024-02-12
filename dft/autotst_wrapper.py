@@ -66,6 +66,7 @@ except KeyError:
     DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
 
 MAX_JOBS_RUNNING = 50
+MAX_N_CONFORMERS = 100
 
 
 def get_termination_status(log_file):
@@ -636,6 +637,7 @@ def run_rotors(species_index, increment_deg=20):
         '--partition': 'west,short',
         '--exclude': 'c5003',
         '--mem': '20Gb',
+        #'--time': '12:00:00',
         '--time': '24:00:00',
         '--cpus-per-task': 16,
         '--array': f'0-{n_rotors - 1}%30',
@@ -684,18 +686,22 @@ def run_rotors(species_index, increment_deg=20):
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     glob_str = os.path.join(base_dir, f'{base_name}*.com')
+    # print(f'glob str is {glob_str}')
     n_conformers = len(glob.glob(glob_str))
     if n_conformers == 0:
         print(f'No conformers with glob string {glob_str}')
         return False
 
+    unlisted_runs = []
     incomplete_indices = []
     good_runs = []
     finished_runs = []
-    for i in range(0, n_conformers):
+    # for i in range(0, n_conformers):
+    for i in range(0, MAX_N_CONFORMERS):
         conformer_file = os.path.join(base_dir, f'{base_name}{i:04}.log')
         if not os.path.exists(conformer_file):
-            return False
+            unlisted_runs.append(i)
+            continue
         opt_status = get_termination_status(conformer_file)
         if opt_status == 0:
             good_runs.append(i)
@@ -707,6 +713,10 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='co
             # optimization didn't finish
             incomplete_indices.append(i)
     # print(len(finished_runs) / float(n_conformers))
+    # print(f'{len(finished_runs) } finished')
+    # print(f'{len(good_runs) } good')
+    # print(f'{len(incomplete_indices) } incomplete')
+    # print(f'{len(unlisted_runs) } unlisted')
     if len(finished_runs) / float(n_conformers) >= completion_threshold and len(good_runs) > 0:
         return True
     return False
