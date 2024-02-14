@@ -1150,8 +1150,8 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         # -------- Adjust the starting geometry to result of previous run if applicable --------------
         if opt_type in ['hfsp' or 'hfsp_shell']:
             # Use HFSP to come up with the TS starting geometry
-            if not reaction.rmg_reaction.family == 'Disproportionation':
-                raise NotImplementedError('HFSP opt only implemented for Disproportionation reactions')
+            if reaction.rmg_reaction.family not in ['Disproportionation', 'H_Abstraction']:
+                raise NotImplementedError('HFSP opt only implemented for Disproportionation and H_Abstraction reactions')
             d14, d24 = get_HFSP_bond_distances(reaction)  # <---- this takes a while and is the same for each conformer so only run once
             new_ase_molecule = get_HFSP_TS_guess(reaction, d14, d24, i)
 
@@ -1557,11 +1557,27 @@ def get_HFSP_bond_distances(reaction):
     """Function to estimate the bond distances for the formed and unformed bonds
     Expects an autotst.reaction.Reaction type input"""
 
-    allowed_families = ['Disproportionation']
-    assert reaction.rmg_reaction.family in allowed_families, 'HFSP opt only implemented for Disproportionation reactions'
+    allowed_families = ['Disproportionation', 'H_Abstraction']
+    family = reaction.rmg_reaction.family
+    assert family in allowed_families, 'HFSP opt only implemented for Disproportionation and H_Abstraction reactions'
 
+    # d14 is the bond that will form: so 1-4 for Disproportionation, and 2-3 for H_Abstraction
+    # d24 is the bond that will break: so 2-4 for Disproportionation, and 1-2 for H_Abstraction
     d14 = None
     d24 = None
+
+    H_label = {
+        'Disproportionation': '*4',
+        'H_Abstraction': '*2'
+    }
+    H_connected_to = {
+        'Disproportionation': '*2',
+        'H_Abstraction': '*1'
+    }
+    H_not_yet_connected_to = {
+        'Disproportionation': '*1',
+        'H_Abstraction': '*3'
+    }
 
     reactants = []
     products = []
@@ -1597,33 +1613,33 @@ def get_HFSP_bond_distances(reaction):
         libraries=[],
         families=allowed_families,
     )
-    labeled_r, labeled_p = kinetics_database.families[reaction.rmg_reaction.family].get_labeled_reactants_and_products(
+    labeled_r, labeled_p = kinetics_database.families[family].get_labeled_reactants_and_products(
         [x.rmg_molecule for x in reactants],
         [x.rmg_molecule for x in products]
     )
     # Get the 2-4 bond distance
     atom_labels = labeled_r[0].get_all_labeled_atoms()
-    if '*2' in labeled_r[0].get_all_labeled_atoms():
-        atom2_index = labeled_r[0].atoms.index(atom_labels['*2'])
-        atom4_index = labeled_r[0].atoms.index(atom_labels['*4'])
-        d24 = reactants[0]._ase_molecule.get_distance(atom2_index, atom4_index)
+    if H_connected_to[family] in labeled_r[0].get_all_labeled_atoms():
+        H_connected_to_index = labeled_r[0].atoms.index(atom_labels[H_connected_to[family]])
+        H_label_index = labeled_r[0].atoms.index(atom_labels[H_label[family]])
+        d24 = reactants[0]._ase_molecule.get_distance(H_connected_to_index, H_label_index)
     else:
         atom_labels = labeled_r[1].get_all_labeled_atoms()
-        atom2_index = labeled_r[1].atoms.index(atom_labels['*2'])
-        atom4_index = labeled_r[1].atoms.index(atom_labels['*4'])
-        d24 = reactants[1]._ase_molecule.get_distance(atom2_index, atom4_index)
+        H_connected_to_index = labeled_r[1].atoms.index(atom_labels[H_connected_to[family]])
+        H_label_index = labeled_r[1].atoms.index(atom_labels[H_label[family]])
+        d24 = reactants[1]._ase_molecule.get_distance(H_connected_to_index, H_label_index)
 
     # Get the 1-4 bond distance
     atom_labels = labeled_p[0].get_all_labeled_atoms()
-    if '*1' in atom_labels:
-        atom1_index = labeled_p[0].atoms.index(atom_labels['*1'])
-        atom4_index = labeled_p[0].atoms.index(atom_labels['*4'])
-        d14 = products[0]._ase_molecule.get_distance(atom1_index, atom4_index)
+    if H_not_yet_connected_to[family] in atom_labels:
+        H_not_yet_connected_to_index = labeled_p[0].atoms.index(atom_labels[H_not_yet_connected_to[family]])
+        H_label_index = labeled_p[0].atoms.index(atom_labels[H_label[family]])
+        d14 = products[0]._ase_molecule.get_distance(H_not_yet_connected_to_index, H_label_index)
     else:
         atom_labels = labeled_p[1].get_all_labeled_atoms()
-        atom1_index = labeled_p[1].atoms.index(atom_labels['*1'])
-        atom4_index = labeled_p[1].atoms.index(atom_labels['*4'])
-        d14 = products[1]._ase_molecule.get_distance(atom1_index, atom4_index)
+        H_not_yet_connected_to_index = labeled_p[1].atoms.index(atom_labels[H_not_yet_connected_to[family]])
+        H_label_index = labeled_p[1].atoms.index(atom_labels[H_label[family]])
+        d14 = products[1]._ase_molecule.get_distance(H_not_yet_connected_to_index, H_label_index)
 
     return d14, d24
 
@@ -1754,18 +1770,35 @@ def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
     """
     direction = 'forward'  # TODO find out if there's a case where we'll ever use reverse
 
+    allowed_families = ['Disproportionation', 'H_Abstraction']
+    family = reaction.rmg_reaction.family
+    assert family in allowed_families, 'HFSP opt only implemented for Disproportionation reactions'
+
+    H_label = {
+        'Disproportionation': '*4',
+        'H_Abstraction': '*2'
+    }
+    H_connected_to = {
+        'Disproportionation': '*2',
+        'H_Abstraction': '*1'
+    }
+    H_not_yet_connected_to = {
+        'Disproportionation': '*1',
+        'H_Abstraction': '*3'
+    }
+
     atom_labels = reaction.ts[direction][conformer_index].rmg_molecule.get_all_labeled_atoms()
     # for Disproportionation it's 2-4 breaks and 1-4 forms
-    atom1_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*1'])
-    atom2_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*2'])
-    atom3_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*3'])
-    atom4_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*4'])
 
-    hydrogen_interaction24 = reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom2_index].is_hydrogen() or \
-        reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom4_index].is_hydrogen
+    H_not_yet_connected_to_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels[H_not_yet_connected_to[family]])
+    H_connected_to_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels[H_connected_to[family]])
+    H_label_index = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels[H_label[family]])
 
-    hydrogen_interaction14 = reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom1_index].is_hydrogen() or \
-        reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom4_index].is_hydrogen
+    hydrogen_interaction24 = reaction.ts[direction][conformer_index].rmg_molecule.atoms[H_connected_to_index].is_hydrogen() or \
+        reaction.ts[direction][conformer_index].rmg_molecule.atoms[H_label_index].is_hydrogen
+
+    hydrogen_interaction14 = reaction.ts[direction][conformer_index].rmg_molecule.atoms[H_not_yet_connected_to_index].is_hydrogen() or \
+        reaction.ts[direction][conformer_index].rmg_molecule.atoms[H_label_index].is_hydrogen
 
     # construct the atom bond potentials:
     # For Disproportionation family: this will be between labeled atoms 4-1 and 4-2
@@ -1773,19 +1806,19 @@ def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
     site_bond_potentials = []
 
     # try re-optimizing with a large d_eq, see if anything changes
-    deq1, k1 = get_dk(d24, get_s(reaction.ts[direction][conformer_index].rmg_molecule, atom2_index, atom4_index), 2, hydrogen_interaction24)
-    deq2, k2 = get_dk(d14, get_s(reaction.ts[direction][conformer_index].rmg_molecule, atom1_index, atom4_index), None, hydrogen_interaction14)
+    deq1, k1 = get_dk(d24, get_s(reaction.ts[direction][conformer_index].rmg_molecule, H_connected_to_index, H_label_index), 2, hydrogen_interaction24)
+    deq2, k2 = get_dk(d14, get_s(reaction.ts[direction][conformer_index].rmg_molecule, H_not_yet_connected_to_index, H_label_index), None, hydrogen_interaction14)
     atom_bond_potentials = [
-        {"ind1": atom1_index, "ind2": atom4_index, "k": k1, "deq": deq1},
-        {"ind1": atom4_index, "ind2": atom2_index, "k": k2, "deq": deq2},
+        {"ind1": H_not_yet_connected_to_index, "ind2": H_label_index, "k": k1, "deq": deq1},
+        {"ind1": H_label_index, "ind2": H_connected_to_index, "k": k2, "deq": deq2},
     ]
 
     # see if anything is bonded to *1, if so, add a soft repelling harmonic potential between it and *2
-    bonds1 = reaction.ts[direction][conformer_index].rmg_molecule.get_bonds(reaction.ts[direction][conformer_index].rmg_molecule.atoms[atom1_index])
+    bonds1 = reaction.ts[direction][conformer_index].rmg_molecule.get_bonds(reaction.ts[direction][conformer_index].rmg_molecule.atoms[H_not_yet_connected_to_index])
     if bonds1:
         for key in bonds1.keys():
             repel_index1 = reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(key)
-            repel_index2 = atom2_index
+            repel_index2 = H_connected_to_index
             atom_bond_potentials.append({"ind1": repel_index1, "ind2": repel_index2, "k": 0.1, "deq": 7})
             break
     # ------------------ Set up the HFSP run --------------------------
@@ -1795,8 +1828,8 @@ def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
         site_bond_potentials=site_bond_potentials
     )
 
-    r1_indices = get_connected(reaction.ts[direction][conformer_index].rmg_molecule, reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*4']))
-    r2_indices = get_connected(reaction.ts[direction][conformer_index].rmg_molecule, reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels['*1']))
+    r1_indices = get_connected(reaction.ts[direction][conformer_index].rmg_molecule, reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels[H_label[family]]))
+    r2_indices = get_connected(reaction.ts[direction][conformer_index].rmg_molecule, reaction.ts[direction][conformer_index].rmg_molecule.atoms.index(atom_labels[H_not_yet_connected_to[family]]))
 
     bond_labels = []
     for bond in reaction.ts[direction][conformer_index].get_bonds()[:-1]:
