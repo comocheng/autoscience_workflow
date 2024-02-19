@@ -1152,7 +1152,10 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
             # Use HFSP to come up with the TS starting geometry
             if reaction.rmg_reaction.family not in ['Disproportionation', 'H_Abstraction']:
                 raise NotImplementedError('HFSP opt only implemented for Disproportionation and H_Abstraction reactions')
-            d14, d24 = get_HFSP_bond_distances(reaction)  # <---- this takes a while and is the same for each conformer so only run once
+            try:
+                d14, d24 = get_HFSP_bond_distances(reaction)  # <---- this takes a while and is the same for each conformer so only run once
+            except KeyError:
+                d14, d24 = get_HFSP_bond_distances(reaction, reverse=True)
             new_ase_molecule = get_HFSP_TS_guess(reaction, d14, d24, i)
 
             # update the molecule with the new coordinates
@@ -1568,15 +1571,15 @@ def get_HFSP_bond_distances(reaction):
 
     H_label = {
         'Disproportionation': '*4',
-        'H_Abstraction': '*2'
+        'H_Abstraction': '*2',
     }
     H_connected_to = {
         'Disproportionation': '*2',
-        'H_Abstraction': '*1'
+        'H_Abstraction': '*1',
     }
     H_not_yet_connected_to = {
         'Disproportionation': '*1',
-        'H_Abstraction': '*3'
+        'H_Abstraction': '*3',
     }
 
     reactants = []
@@ -1613,30 +1616,41 @@ def get_HFSP_bond_distances(reaction):
         libraries=[],
         families=allowed_families,
     )
-    labeled_r, labeled_p = kinetics_database.families[family].get_labeled_reactants_and_products(
+    labeled_r, labeled_p = kinetics_database.families[reaction.rmg_reaction.family].get_labeled_reactants_and_products(
         [x.rmg_molecule for x in reactants],
-        [x.rmg_molecule for x in products]
+        [x.rmg_molecule for x in products],
+        relabel_atoms=False
     )
-    # Get the 2-4 bond distance
+    # reorder labeled_p according to species index to match the conformers we built
+    if database_fun.get_unique_species_index(labeled_p[0]) > database_fun.get_unique_species_index(labeled_p[1]):
+        labeled_p = [labeled_p[1], labeled_p[0]]
+    if database_fun.get_unique_species_index(labeled_r[0]) > database_fun.get_unique_species_index(labeled_r[1]):
+        labeled_r = [labeled_r[1], labeled_r[0]]
+
+    # Get the 2-4 bond distance - H and what it's already connected to
     atom_labels = labeled_r[0].get_all_labeled_atoms()
     if H_connected_to[family] in labeled_r[0].get_all_labeled_atoms():
+        print(atom_labels)
         H_connected_to_index = labeled_r[0].atoms.index(atom_labels[H_connected_to[family]])
         H_label_index = labeled_r[0].atoms.index(atom_labels[H_label[family]])
         d24 = reactants[0]._ase_molecule.get_distance(H_connected_to_index, H_label_index)
     else:
         atom_labels = labeled_r[1].get_all_labeled_atoms()
+        print(atom_labels)
         H_connected_to_index = labeled_r[1].atoms.index(atom_labels[H_connected_to[family]])
         H_label_index = labeled_r[1].atoms.index(atom_labels[H_label[family]])
         d24 = reactants[1]._ase_molecule.get_distance(H_connected_to_index, H_label_index)
 
-    # Get the 1-4 bond distance
+    # Get the 1-4 bond distance - H and what it will bond to
     atom_labels = labeled_p[0].get_all_labeled_atoms()
     if H_not_yet_connected_to[family] in atom_labels:
+        print(atom_labels)
         H_not_yet_connected_to_index = labeled_p[0].atoms.index(atom_labels[H_not_yet_connected_to[family]])
         H_label_index = labeled_p[0].atoms.index(atom_labels[H_label[family]])
         d14 = products[0]._ase_molecule.get_distance(H_not_yet_connected_to_index, H_label_index)
     else:
         atom_labels = labeled_p[1].get_all_labeled_atoms()
+        print(atom_labels)
         H_not_yet_connected_to_index = labeled_p[1].atoms.index(atom_labels[H_not_yet_connected_to[family]])
         H_label_index = labeled_p[1].atoms.index(atom_labels[H_label[family]])
         d14 = products[1]._ase_molecule.get_distance(H_not_yet_connected_to_index, H_label_index)
