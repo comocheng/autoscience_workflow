@@ -1,6 +1,7 @@
 # set of functions related to thermokinetic calculations
 
 import os
+import re
 import glob
 import sys
 import numpy as np
@@ -29,6 +30,7 @@ import autotst.conformer.utilities
 
 # import ase.io
 import ase.constraints
+import ase.io.zmatrix
 import ase.io.gaussian
 import ase.calculators.lj  # the backup built-in calculator. Do not use it for anything important
 
@@ -585,6 +587,155 @@ def setup_rotors(species_index, increment_deg=20):
     return True
 
 
+def run_rotor_offset(species_index, rotor_index):
+    rotor_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'rotors')
+
+    # read the job file:
+    original_rotor_file = os.path.join(rotor_dir, f'rotor_{rotor_index:04}.com')
+    with open(original_rotor_file, 'r') as f:
+        lines = f.readlines()
+        for i in range(1, 5):
+            pattern = 'D\s(\d+ \d+ \d+ \d+) S '
+            m1 = re.search(pattern, lines[-i])
+            if m1:
+                scanline_index = i
+                scanline = lines[-i]
+                break
+        else:
+            species_log(species_index, 'could not find scanline')
+            print(lines)
+
+    dihedral_indices = [int(x) for x in scanline.split()[1:5]]
+
+    with open(original_rotor_file, 'r') as f:
+        file_sections = ase.io.gaussian._get_gaussian_in_sections(f)
+        mod_red = file_sections['mol_spec']
+
+    z_text = ''.join(file_sections['mol_spec'])
+    z_values_text = []
+    for i, row in enumerate(file_sections['extra']):
+        if not row.strip():
+            break
+        z_values_text.append(row)
+
+    bonds = {}
+    angles = {}
+    dihedrals = {}
+    for z_value_row in z_values_text:
+        # look for bond
+        bond_pattern = 'B\d\s*'
+        m1 = re.search(bond_pattern, z_value_row)
+        if m1:
+            bond_name = z_value_row.split()[0]
+            bond_value = float(z_value_row.strip().split()[-1])
+            bonds[bond_name] = bond_value
+            continue
+
+        # look for angle
+        angle_pattern = 'A\d\s*'
+        m1 = re.search(angle_pattern, z_value_row)
+        if m1:
+            angle_name = z_value_row.split()[0]
+            angle_value = float(z_value_row.strip().split()[-1])
+            angles[angle_name] = angle_value
+
+        # look for dihedral
+        dihedral_pattern = 'D\d\s*'
+        m1 = re.search(dihedral_pattern, z_value_row)
+        if m1:
+            dihedral_name = z_value_row.split()[0]
+            dihedral_value = float(z_value_row.strip().split()[-1])
+            dihedrals[dihedral_name] = dihedral_value
+
+    # make the thing
+    for bond_key in bonds.keys():
+        z_text = z_text.replace(bond_key, str(bonds[bond_key]))
+    for angle_key in angles.keys():
+        z_text = z_text.replace(angle_key, str(angles[angle_key]))
+    for dihedral_key in dihedrals.keys():
+        z_text = z_text.replace(dihedral_key, str(dihedrals[dihedral_key]))
+    atoms = ase.io.zmatrix.parse_zmatrix(z_text)
+
+    # get the dihedral index
+    dihedral_indices = [int(x) for x in scanline.split()[1:5]]
+    dihedral_angle = atoms.get_dihedral(*[x - 1 for x in dihedral_indices])
+    my_dihedral = []
+    for key in dihedrals.keys():
+        if np.isclose(dihedrals[key], dihedral_angle):
+            my_dihedral.append(key)
+        elif np.isclose(dihedrals[key], dihedral_angle - 360.0):
+            my_dihedral.append(key)
+        elif np.isclose(dihedrals[key], dihedral_angle + 360.0):
+            my_dihedral.append(key)
+    assert len(my_dihedral) == 1
+
+    splice_dir = os.path.join(os.path.dirname(original_rotor_file), f'spliced_rotors')
+
+    # test if it already ran
+    if os.path.exists(os.path.join(splice_dir, f'rotor_{rotor_index:04}_fwd_0000.log')):
+        species_log(species_index, f'Offset rotor {rotor_index} already ran')
+        return
+
+    os.makedirs(splice_dir, exist_ok=True)
+
+    for i in range(0, 8):
+        dihedral_rot = 45 * i
+        file_name = os.path.join(splice_dir, f'rotor_{rotor_index:04}_fwd_{i:04}.com')
+        file_lines = []
+        for line in lines:
+            if line.startswith(my_dihedral[0] + ' '):
+                # rotate it the amount
+                line = my_dihedral[0] + ' ' + str(dihedrals[my_dihedral[0]] + dihedral_rot) + '\n'
+            file_lines.append(line)
+        with open(file_name, 'w') as f:
+            f.writelines(file_lines)
+
+    # Make slurm scripts to run all the rotors
+    fwd_label = f'rotor_{rotor_index:04}_fwd_'
+    slurm_run_file = os.path.join(splice_dir, f'run_{rotor_index:04}_fwd.sh')
+    slurm_settings = {
+        '--job-name': f'g16_sp{species_index}_rot{rotor_index}',
+        '--error': 'error.log',
+        '--nodes': 1,
+        '--partition': 'short,west',
+        # '--constraint': 'cascadelake',
+        '--mem': '20Gb',
+        '--time': '24:00:00',
+        '--cpus-per-task': 16,
+        '--array': f'0-7',
+    }
+
+    slurm_file_writer = job_manager.SlurmJobFile(full_path=slurm_run_file)
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        f'fname="{fwd_label}' + '${RUN_i}.com"\n\n',
+
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(splice_dir)
+    gaussian_rotors_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    gaussian_rotors_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
 def run_rotors(species_index, increment_deg=20):
     """Run the rotor scans that were set up"""
     if arkane_species_complete(species_index):
@@ -637,50 +788,49 @@ def run_rotors(species_index, increment_deg=20):
         '--partition': 'west,short',
         '--exclude': 'c5003',
         '--mem': '20Gb',
-        #'--time': '12:00:00',
         '--time': '24:00:00',
         '--cpus-per-task': 16,
         '--array': f'0-{n_rotors - 1}%30',
     }
+
+    # ------------------ ROTOR OFFSET METHOD ----------------------
     if rerun_indices:
-        slurm_run_file = os.path.join(rotor_dir, f'rerun{suffix}.sh')
-        slurm_settings['--partition'] = 'short'
-        slurm_settings['--constraint'] = 'cascadelake'
-        slurm_settings['--array'] = ordered_array_str(rerun_indices)
-        slurm_settings['--cpus-per-task'] = 32
-        slurm_settings.pop('--exclude')
+        # run the rotors using the offset method
+        for rotor_index in rerun_indices:
+            run_rotor_offset(rotor_index, rerun_indices)
 
-    slurm_file_writer = job_manager.SlurmJobFile(
-        full_path=slurm_run_file,
-    )
-    slurm_file_writer.settings = slurm_settings
-    slurm_file_writer.content = [
-        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
-        'mkdir -p $GAUSS_SCRDIR\n',
-        'module load gaussian/g16\n',
-        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+    else:
+        slurm_file_writer = job_manager.SlurmJobFile(
+            full_path=slurm_run_file,
+        )
+        slurm_file_writer.settings = slurm_settings
+        slurm_file_writer.content = [
+            'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+            'mkdir -p $GAUSS_SCRDIR\n',
+            'module load gaussian/g16\n',
+            'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
 
-        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-        'fname="' + rotor_str + '_${RUN_i}.com"\n\n',
+            'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+            'fname="' + rotor_str + '_${RUN_i}.com"\n\n',
 
-        'g16 $fname\n',
-    ]
-    slurm_file_writer.write_file()
+            'g16 $fname\n',
+        ]
+        slurm_file_writer.write_file()
 
-    # submit the job
-    start_dir = os.getcwd()
-    os.chdir(rotor_dir)
-    gaussian_rotors_job = job_manager.SlurmJob()
-    slurm_cmd = f"sbatch {slurm_run_file}"
+        # submit the job
+        start_dir = os.getcwd()
+        os.chdir(rotor_dir)
+        gaussian_rotors_job = job_manager.SlurmJob()
+        slurm_cmd = f"sbatch {slurm_run_file}"
 
-    # wait for fewer than MAX_JOBS_RUNNING jobs running
-    jobs_running = job_manager.count_slurm_jobs()
-    while jobs_running > MAX_JOBS_RUNNING:
-        time.sleep(60)
+        # wait for fewer than MAX_JOBS_RUNNING jobs running
         jobs_running = job_manager.count_slurm_jobs()
+        while jobs_running > MAX_JOBS_RUNNING:
+            time.sleep(60)
+            jobs_running = job_manager.count_slurm_jobs()
 
-    gaussian_rotors_job.submit(slurm_cmd)
-    os.chdir(start_dir)
+        gaussian_rotors_job.submit(slurm_cmd)
+        os.chdir(start_dir)
 
 
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
