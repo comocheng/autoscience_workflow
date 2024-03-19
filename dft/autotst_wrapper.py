@@ -1388,7 +1388,8 @@ def run_opt(reaction_index, opt_type, direction='forward'):
         set_reaction_status(reaction_index, f'{opt_type}_opt', True)
         return True
 
-    n_conformers = len(glob.glob(os.path.join(opt_dir, f'{opt_label[:-8]}*.com')))
+    com_files = glob.glob(os.path.join(opt_dir, f'{opt_label[:-8]}*.com'))
+    n_conformers = len(com_files)
     rerun_indices = []
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(opt_dir, f'{opt_label[:-8]}{i:04}.log')
@@ -1410,6 +1411,18 @@ def run_opt(reaction_index, opt_type, direction='forward'):
         '--cpus-per-task': 16,
         '--array': f'0-{n_conformers - 1}%30',
     }
+
+    # need to reformat the array to include the conformers whose previous runs worked
+    if opt_type != 'shell' and opt_type != 'hfsp_shell':
+        pattern = '(\d\d\d\d).com'  # get the conformer index on each .com file (last 4 digits before .com)
+        to_run_indices = []
+        for com_file in com_files:
+            m1 = re.search(pattern, com_file)
+            if not m1:
+                raise OSError(f'could not find relevant .com files! for {opt_type} opt')
+            to_run_indices.append(int(m1.groups()[0]))
+        slurm_settings['--array'] = ordered_array_str(to_run_indices)
+
     if rerun_indices:
         slurm_run_file = os.path.join(opt_dir, 'rerun.sh')
         slurm_settings['--partition'] = 'short'
