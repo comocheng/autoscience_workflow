@@ -591,6 +591,7 @@ def run_rotor_offset(species_index, rotor_index):
     rotor_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'rotors')
 
     # read the job file:
+    species_log(species_index, f'Running offset rotors for rotor {rotor_index}')
     original_rotor_file = os.path.join(rotor_dir, f'rotor_{rotor_index:04}.com')
     with open(original_rotor_file, 'r') as f:
         lines = f.readlines()
@@ -797,7 +798,7 @@ def run_rotors(species_index, increment_deg=20):
     if rerun_indices:
         # run the rotors using the offset method
         for rotor_index in rerun_indices:
-            run_rotor_offset(rotor_index, rerun_indices)
+            run_rotor_offset(species_index, rotor_index)
 
     else:
         slurm_file_writer = job_manager.SlurmJobFile(
