@@ -33,6 +33,7 @@ import ase.constraints
 import ase.io.zmatrix
 import ase.io.gaussian
 import ase.calculators.lj  # the backup built-in calculator. Do not use it for anything important
+import ase.geometry.analysis
 
 # maybe put this in a try block?
 try:
@@ -545,6 +546,10 @@ def setup_rotors(species_index, increment_deg=20):
     conformer_blacklist = []
     while not valid_conformer:
         conformer_file = get_lowest_energy_gaussian_file(conformer_dir, blacklist=conformer_blacklist)
+        if not conformer_file:
+            species_log(species_index, f'Failed to find lowest energy gaussian file in {conformer_dir}')
+            species_log(species_index, f'Conformer blacklist is {conformer_blacklist}')
+
         if bonds_too_large(conformer_file, species_index):
             conformer_blacklist.append(conformer_file)
             species_log(species_index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
@@ -668,6 +673,9 @@ def run_rotor_offset(species_index, rotor_index):
             my_dihedral.append(key)
         elif np.isclose(dihedrals[key], dihedral_angle + 360.0):
             my_dihedral.append(key)
+    print(dihedrals)
+    print(my_dihedral)
+    print('ref', dihedral_angle)
     assert len(my_dihedral) == 1
 
     splice_dir = os.path.join(os.path.dirname(original_rotor_file), f'spliced_rotors')
@@ -857,19 +865,21 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='co
         if opt_status == 0:
             good_runs.append(i)
             finished_runs.append(i)
-        elif opt_status == 2 or opt_status == 3 or opt_status == 4 or opt_status == 5:
+        elif opt_status == 1 or opt_status == 2 or opt_status == 3 or opt_status == 4 or opt_status == 5:
             # not good optimizations, but we're going to keep going anyways
             finished_runs.append(i)
         else:
-            # optimization didn't finish
+            # optimization didn't finish (-1)
             incomplete_indices.append(i)
-    # print(len(finished_runs) / float(n_conformers))
-    # print(f'{len(finished_runs) } finished')
-    # print(f'{len(good_runs) } good')
-    # print(f'{len(incomplete_indices) } incomplete')
-    # print(f'{len(unlisted_runs) } unlisted')
     if len(finished_runs) / float(n_conformers) >= completion_threshold and len(good_runs) > 0:
         return True
+
+    print('Not done optimizing:')
+    print(len(finished_runs) / float(n_conformers))
+    print(f'{len(finished_runs) } finished')
+    print(f'{len(good_runs) } good')
+    print(f'{len(incomplete_indices) } incomplete')
+    print(f'{len(unlisted_runs) } unlisted')
     return False
 
 
@@ -1576,6 +1586,10 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
             if not check_vib_irc(reaction_index, logfile):
                 continue
 
+        # skip if the bonds don't match what's expected
+        if not verify_bond_count(reaction_index, gaussian_file=logfile):
+            continue
+
         try:
             g_reader = arkane.ess.gaussian.GaussianLog(logfile)
             energy = g_reader.load_energy()
@@ -2028,6 +2042,62 @@ def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
     opt = ase.optimize.BFGS(reaction.ts[direction][conformer_index].ase_molecule, logfile=None)
     opt.run(fmax=0.02, steps=1500)
     return opt.atoms
+
+
+def verify_bond_count(reaction_index, gaussian_file=None):
+    # function to count the number of each kind of bond to compare RMG's description to the optimized result coming out of Gaussian
+    reaction_log(reaction_index, f'Verifying bond counts for reaction {reaction_index}')
+
+    def get_type_bonds(ref_bond_str, autotst_ts):
+        bond_list = autotst_ts.get_bonds()
+        bonds_of_type = []
+        for i in range(len(bond_list)):
+            atoms = autotst_ts.ase_molecule[bond_list[i].atom_indices]
+            symbols = [a.symbol for a in atoms]
+            symbols.sort()
+            bond_str = ''.join(symbols)
+            if bond_str == ref_bond_str:
+                bonds_of_type.append(bond_list[i].atom_indices)
+        return bonds_of_type
+
+    rmg_reaction = database_fun.index2reaction(reaction_index)
+    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    reaction.get_labeled_reaction()
+    reaction.get_label()
+    reaction.ts['forward'][0].get_molecules()
+
+    # default is to use whatever gaussian TS file got copied into the arkane directory
+    if not gaussian_file:
+        gaussian_file = glob.glob(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'arkane', 'fwd_*.log'))[0]
+
+    with open(gaussian_file, 'r') as f:
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+
+    match = True
+    autotst_bonds = reaction.ts['forward'][0].get_bonds()
+    analysis = ase.geometry.analysis.Analysis(atoms)
+    bond_types = [
+        'CC',
+        'CO',
+        'CH',
+        'OO',
+        'HO',
+        'HH',
+    ]
+
+    for b in range(len(bond_types)):
+        reaction_log(reaction_index, f'Comparing {bond_types[b][0]}-{bond_types[b][1]} bonds:')
+        gaussian_bonds = analysis.get_bonds(bond_types[b][0], bond_types[b][1], unique=True)
+        reaction_log(reaction_index, gaussian_bonds[0])
+        
+        rmg_bonds = get_type_bonds(bond_types[b], reaction.ts['forward'][0])
+        reaction_log(reaction_index, rmg_bonds)
+
+        if len(rmg_bonds) != len(gaussian_bonds[0]):
+            reaction_log(reaction_index, 'WARNING: RMG and ASE disagree with number of bonds')
+            match = False
+
+    return match
 
 
 if __name__ == '__main__':
