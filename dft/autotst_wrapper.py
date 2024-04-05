@@ -70,7 +70,7 @@ except KeyError:
 
 MAX_JOBS_RUNNING = 50
 MAX_N_CONFORMERS = 100
-
+MAX_JOBS_PER_TASK = 30
 
 def get_termination_status(log_file):
     """Analyze a Gaussian run by reading in reverse (allegedly faster than reading from start)
@@ -292,8 +292,8 @@ def screen_species_conformers(species_index):
 
     spec.generate_conformers(
         ase_calculator=calc,
-        max_combos=10000,
-        max_conformers=1000,
+        max_combos=1000,
+        max_conformers=MAX_N_CONFORMERS,
         results_dir=conformer_dir,
         save_results=True,
     )
@@ -344,7 +344,7 @@ def optimize_conformers(species_index):
         set_species_status(species_index, 'conformer_opt', True)
         return True
 
-    n_conformers = len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com')))
+    n_conformers = min(len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com'))), MAX_N_CONFORMERS)
     rerun_indices = []
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
@@ -364,13 +364,13 @@ def optimize_conformers(species_index):
         '--mem': '20Gb',
         '--time': '24:00:00',
         '--cpus-per-task': 16,
-        '--array': f'0-{n_conformers - 1}%30',
+        '--array': f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}',
     }
     if rerun_indices:
         slurm_run_file = os.path.join(conformer_dir, 'rerun.sh')
         slurm_settings['--partition'] = 'short'
         slurm_settings['--constraint'] = 'cascadelake'
-        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
         slurm_settings['--cpus-per-task'] = 32
         slurm_settings.pop('--exclude')
 
@@ -799,7 +799,7 @@ def run_rotors(species_index, increment_deg=20):
         '--mem': '20Gb',
         '--time': '24:00:00',
         '--cpus-per-task': 16,
-        '--array': f'0-{n_rotors - 1}%30',
+        '--array': f'0-{n_rotors - 1}%{MAX_JOBS_PER_TASK}',
     }
 
     # ------------------ ROTOR OFFSET METHOD ----------------------
@@ -1420,7 +1420,7 @@ def run_opt(reaction_index, opt_type, direction='forward'):
         '--mem': '20Gb',
         '--time': '24:00:00',
         '--cpus-per-task': 16,
-        '--array': f'0-{n_conformers - 1}%30',
+        '--array': f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}',
     }
 
     # need to reformat the array to include the conformers whose previous runs worked
@@ -1432,13 +1432,13 @@ def run_opt(reaction_index, opt_type, direction='forward'):
             if not m1:
                 raise OSError(f'could not find relevant .com files! for {opt_type} opt')
             to_run_indices.append(int(m1.groups()[0]))
-        slurm_settings['--array'] = ordered_array_str(to_run_indices)
+        slurm_settings['--array'] = ordered_array_str(to_run_indices) + f'%{MAX_JOBS_PER_TASK}'
 
     if rerun_indices:
         slurm_run_file = os.path.join(opt_dir, 'rerun.sh')
         slurm_settings['--partition'] = 'short'
         slurm_settings['--constraint'] = 'cascadelake'
-        slurm_settings['--array'] = ordered_array_str(rerun_indices)
+        slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
         slurm_settings['--cpus-per-task'] = 32
         slurm_settings.pop('--exclude')
 
@@ -1555,7 +1555,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
             if species_dict[entry].smiles == smiles:
                 return str(species_dict[entry])
         # need to look for isomorphism
-        print(f'Failed to get species name for {smiles}')
+        reaction_log(reaction_index, f'Failed to get species name for {smiles}')
         return smiles
 
     def get_reaction_label(rmg_reaction):
@@ -1620,7 +1620,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         if duplicate:
             continue
 
-        print(f'{reactant}')
+        reaction_log(reaction_index, f'{reactant}')
         species_index = database_fun.get_unique_species_index(reactant)
         species_smiles = reactant.smiles
 
@@ -1635,6 +1635,12 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         try:
             species_file = os.path.join(f'species_{species_index:04}', os.path.basename(glob.glob(os.path.join(species_arkane_dir, 'conformer_*.py'))[0]))
         except IndexError:
+            # automatically start the process of running the missing species...
+            reaction_log(reaction_index, f'Missing species conformer file {species_arkane_dir}')
+            reaction_log(reaction_index, f'Starting species calculation for species {species_index}: {species_smiles}')
+            screen_species_conformers(species_index)
+            optimize_conformers(species_index)
+
             raise IndexError(f'No species conformer file found in {species_arkane_dir}')
 
         try:
