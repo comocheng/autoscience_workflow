@@ -365,7 +365,7 @@ def optimize_conformers(species_index):
                 rerun_indices.append(i)
 
     if logfile_ran_once and not rerun_indices:
-        species_log(species_index, f'Some conformers failed {failed indices} but there is nothing to rerun')
+        species_log(species_index, f'Some conformers failed {failed_indices} but there is nothing to rerun')
         return False
 
     # Make slurm script to run all the conformer calculations
@@ -641,7 +641,7 @@ def run_rotors(species_index, increment_deg=20):
         rotor_logfile = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.log')
         if os.path.exists(rotor_logfile):
             termination_status = get_termination_status(rotor_logfile)
-            if termination status != 0:
+            if termination_status != 0:
                 failed_indices.append(i)
             if termination_status == -1:
                 rerun_indices.append(i)
@@ -1972,7 +1972,7 @@ def verify_bond_count(reaction_index, gaussian_file=None):
         reaction_log(reaction_index, f'Comparing {bond_types[b][0]}-{bond_types[b][1]} bonds:')
         gaussian_bonds = analysis.get_bonds(bond_types[b][0], bond_types[b][1], unique=True)
         reaction_log(reaction_index, gaussian_bonds[0])
-        
+
         rmg_bonds = get_type_bonds(bond_types[b], reaction.ts['forward'][0])
         reaction_log(reaction_index, rmg_bonds)
 
@@ -1981,56 +1981,3 @@ def verify_bond_count(reaction_index, gaussian_file=None):
             match = False
 
     return match
-
-
-if __name__ == '__main__':
-    # for idx in [419, 1814, 1287, 748, 370, 1103, 371]:
-    for idx in [1288]:
-        setup_opt(idx, 'center')
-        run_opt(idx, 'center')
-
-    exit(0)
-    top_reactions = [
-        915, 749, 324, 419, 1814, 1287, 748, 1288, 370, 1103,
-        371, 213, 420, 581, 464, 1289, 720, 722, 1658, 574, 725, 1736,
-        418, 1290, 1721, 1665, 1685, 427, 1714, 1766, 655, 1773, 1003, 650,
-        985, 918, 585, 692, 1532, 1326, 1578, 1428, 916, 595, 693, 1242
-    ]
-
-    if len(sys.argv) > 1:
-        reaction_index = int(sys.argv[1])
-        screen_reaction_ts(reaction_index)
-    else:
-        for rxn in top_reactions:
-            # 324 has errors, 915 and 749 are just currently running
-            if rxn in [915, 749, 324]:
-                continue
-            print('Screen reaction', rxn)
-            screen_reaction_ts(rxn)
-            run_shell_opt(rxn)
-    exit(0)
-    # setup_arkane_species(87)
-    # exit(0)
-
-    # run one
-
-    # if len(sys.argv) > 1:
-    #     species_index = int(sys.argv[1])
-    # else:
-    #     species_index = 87
-    # screen_conformers(species_index)
-    # optimize_conformers(species_index)
-    # exit(0)
-    # run all
-    # wait until # jobs is below 40 to start a new thing:
-    import job_manager
-
-    # for species_index in range(40, 65):
-    # for species_index in range(15, 110):
-    for species_index in range(0, 15):
-        jobs_running = job_manager.count_slurm_jobs()
-        while jobs_running > 40:
-            time.sleep(60)
-            jobs_running = job_manager.count_slurm_jobs()
-        screen_species_conformers(species_index)
-        optimize_conformers(species_index)
