@@ -352,12 +352,21 @@ def optimize_conformers(species_index):
 
     n_conformers = min(len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com'))), MAX_N_CONFORMERS)
     rerun_indices = []
+    failed_indices = []
+    logfile_ran_once = False
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(conformer_dir, f'conformer_{i:04}.log')
         if os.path.exists(conformer_logfile):
+            logfile_ran_once = True
             termination_status = get_termination_status(conformer_logfile)
-            if termination_status == 1 or termination_status == -1:
+            if termination_status != 0:
+                failed_indices.append(i)
+            if termination_status == -1:
                 rerun_indices.append(i)
+
+    if logfile_ran_once and not rerun_indices:
+        species_log(species_index, f'Some conformers failed {failed indices} but there is nothing to rerun')
+        return False
 
     # Make slurm script to run all the conformer calculations
     slurm_run_file = os.path.join(conformer_dir, 'run.sh')
@@ -777,21 +786,25 @@ def run_rotors(species_index, increment_deg=20, use_rotor_offset=False):
     if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name=f'{rotor_str}_'):
         return True  # already ran
 
-    species_log(species_index, f'Counting incomplete rotor scans...')
+    species_log(species_index, f'Counting incomplete rotor scans (ran out of time)...')
     rerun_indices = []
+    failed_indices = []
     n_rotors = len(glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com')))
     for i in range(0, n_rotors):
         rotor_logfile = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.log')
         if os.path.exists(rotor_logfile):
             termination_status = get_termination_status(rotor_logfile)
-            if termination_status == 1 or termination_status == -1:
+            if termination status != 0:
+                failed_indices.append(i)
+            if termination_status == -1:
                 rerun_indices.append(i)
                 species_log(species_index, f'Rotor {i} did not complete')
 
     rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.log'))
-    if len(rotor_logfiles) == n_rotors and not rerun_indices:
-        species_log(species_index, 'Rotors already ran')
-        return True
+
+    if rotor_logfiles and not rerun_indices:
+        species_log(species_index, f'Some rotors {failed_indices} failed but there are no calculations left to run.')
+        return False
 
     species_log(species_index, f'Starting rotor scans optimization job')
     # Make slurm script to run all the rotor calculations
@@ -1417,12 +1430,21 @@ def run_opt(reaction_index, opt_type, direction='forward'):
     com_files = glob.glob(os.path.join(opt_dir, f'{opt_label[:-8]}*.com'))
     n_conformers = len(com_files)
     rerun_indices = []
+    failed_indices = []
+    optimization_ran_once = False
     for i in range(0, n_conformers):
         conformer_logfile = os.path.join(opt_dir, f'{opt_label[:-8]}{i:04}.log')
         if os.path.exists(conformer_logfile):
+            optimization_ran_once = True
             termination_status = get_termination_status(conformer_logfile)
-            if termination_status == 1 or termination_status == -1:
+            if termination_status != 0:
+                failed_indices.append(i)
+            if termination_status == -1:
                 rerun_indices.append(i)
+
+    if optimization_ran_once and not rerun_indices:
+        reaction_log(reaction_index, f'Some conformers failed {failed_indices} but there is nothing to rerun.')
+        return False
 
     # Make slurm script to run all the conformer calculations
     slurm_run_file = os.path.join(opt_dir, 'run.sh')
