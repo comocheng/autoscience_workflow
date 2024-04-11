@@ -6,9 +6,9 @@ reaction_index = int(sys.argv[1])
 
 
 df = pd.read_csv('/work/westgroup/harris.se/autoscience/reaction_calculator/dft/reaction_database.csv')
-#print(df)
 
-unique_string = df['unique_string'].values[reaction_index]
+
+unique_string = df.loc[df['i'] == reaction_index]['unique_string'].values[0]
 
 reactants = [int(x) for x in unique_string.split('=')[0].split('+')]
 products = [int(x) for x in unique_string.split('=')[1].split('+')]

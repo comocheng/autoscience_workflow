@@ -92,13 +92,27 @@ else:
     printlog('Reaction delays already ran')
 
 # Step 5. Compile the sensitivity
-printlog('Compiling sensitivity results')
-compile_sensitivity_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/compile_sensitivity.sh'
+if not os.path.exists(os.path.join(working_dir, 'total_perturbed_mech_delays.npy')) or \
+        not os.path.exists(os.path.join(working_dir, 'total_base_delays.npy')):
+    printlog('Compiling sensitivity results')
+    compile_sensitivity_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/compile_sensitivity.sh'
+    job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {compile_sensitivity_script} {chemkin_file}"
+    job.submit(slurm_cmd)
+    time.sleep(2.0)
+    job.wait(check_interval=10.0)
+    printlog(f'Done compiling sensitivity results')
+else:
+    printlog('Sensitivity already compiled')
+
+# Step 6. Calculate and save the improvement scores using sensitivity and uncertainty
+printlog('Calculating Improvement Scores')
+export_improvement_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_export_improvement.sh'
 job = job_manager.SlurmJob()
-slurm_cmd = f"sbatch {compile_sensitivity_script} {chemkin_file}"
+slurm_cmd = f"sbatch {export_improvement_script} {chemkin_file}"
 job.submit(slurm_cmd)
 time.sleep(2.0)
 job.wait(check_interval=10.0)
-printlog(f'Done compiling sensitivity results')
+printlog(f'Done calculating improvement score')
 
 os.chdir(start_dir)

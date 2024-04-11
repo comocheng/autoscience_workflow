@@ -156,7 +156,7 @@ rev_label = f'rotor_{rotor_index:04}_rev_'
 slurm_run_file_rev = os.path.join(splice_dir, 'run_many_rev.sh')
 slurm_file_writer_rev = job_manager.SlurmJobFile(full_path=slurm_run_file_rev)
 slurm_file_writer_rev.settings = slurm_settings
-slurm_file_writer.content = [
+slurm_file_writer_rev.content = [
     'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
     'mkdir -p $GAUSS_SCRDIR\n',
     'module load gaussian/g16\n',

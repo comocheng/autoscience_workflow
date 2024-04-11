@@ -72,6 +72,7 @@ MAX_JOBS_RUNNING = 50
 MAX_N_CONFORMERS = 100
 MAX_JOBS_PER_TASK = 30
 
+
 def get_termination_status(log_file):
     """Analyze a Gaussian run by reading in reverse (allegedly faster than reading from start)
     Returns:
