@@ -267,6 +267,11 @@ def screen_species_conformers(species_index):
 
     conformer_dir = os.path.join(species_dir, 'conformers')
     os.makedirs(conformer_dir, exist_ok=True)
+
+    if os.path.exists(os.path.join(conformer_dir, 'conformer_0000.com')):
+        species_log(species_index, 'Conformers already screened')
+        return True
+
     species_log(species_index, f'Starting conformer screening job')
 
     # ------------------ Use Hotbit to screen the conformers ------------------
@@ -1104,6 +1109,7 @@ def setup_arkane_species(species_index, include_rotors=True):
         rotor_files = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
         for rotor_file in rotor_files:
             shutil.copy(rotor_file, arkane_dir)
+
     else:
         conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
 
