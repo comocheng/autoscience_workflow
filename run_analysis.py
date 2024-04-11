@@ -14,8 +14,6 @@ import subprocess
 import job_manager
 
 
-skip_add_mech = True
-
 working_dir = sys.argv[1]
 if working_dir.endswith('.inp'):
     working_dir = os.path.dirname(working_dir)
@@ -37,18 +35,16 @@ def printlog(message):
 
 
 # Step 1. Add the mechanism to the database
-if not skip_add_mech:
-    printlog(f'Launching Add Mechanism to Database')
-    add_mech_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/database/run_add_mech_to_db.sh'
-    job = job_manager.SlurmJob()
-    slurm_cmd = f"sbatch {add_mech_script} {chemkin_file}"
-    job.submit(slurm_cmd)
-    time.sleep(2.0)
-    job.wait(check_interval=1.0)
+printlog(f'Launching Add Mechanism to Database')
+add_mech_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/database/run_add_mech_to_db.sh'
+job = job_manager.SlurmJob()
+slurm_cmd = f"sbatch {add_mech_script} {chemkin_file}"
+job.submit(slurm_cmd)
+time.sleep(2.0)
+job.wait(check_interval=1.0)
 
-    printlog(f'Done adding Mechanism to Database')
-else:
-    printlog('skipping add mechanism to database')
+printlog(f'Done adding Mechanism to Database')
+
 
 # Step 2. Run the species delays if they're not all done
 if not os.path.exists(os.path.join(working_dir, 'table_0007', 'species_delays_0007.npy')):
