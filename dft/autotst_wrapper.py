@@ -751,7 +751,7 @@ def run_rotor_offset(species_index, rotor_index):
     os.chdir(start_dir)
 
 
-def run_rotors(species_index, increment_deg=20):
+def run_rotors(species_index, increment_deg=20, use_rotor_offset=False):
     """Run the rotor scans that were set up"""
     if arkane_species_complete(species_index):
         return True
@@ -809,43 +809,51 @@ def run_rotors(species_index, increment_deg=20):
     }
 
     # ------------------ ROTOR OFFSET METHOD ----------------------
-    if rerun_indices:
+    if use_rotor_offset and rerun_indices:
         # run the rotors using the offset method
         for rotor_index in rerun_indices:
             run_rotor_offset(species_index, rotor_index)
+        return True
 
-    else:
-        slurm_file_writer = job_manager.SlurmJobFile(
-            full_path=slurm_run_file,
-        )
-        slurm_file_writer.settings = slurm_settings
-        slurm_file_writer.content = [
-            'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
-            'mkdir -p $GAUSS_SCRDIR\n',
-            'module load gaussian/g16\n',
-            'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+    if rerun_indices:
+        slurm_run_file = os.path.join(rotor_dir, f'rerun{suffix}.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
 
-            'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-            'fname="' + rotor_str + '_${RUN_i}.com"\n\n',
+    slurm_file_writer = job_manager.SlurmJobFile(
+        full_path=slurm_run_file,
+    )
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
 
-            'g16 $fname\n',
-        ]
-        slurm_file_writer.write_file()
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        'fname="' + rotor_str + '_${RUN_i}.com"\n\n',
 
-        # submit the job
-        start_dir = os.getcwd()
-        os.chdir(rotor_dir)
-        gaussian_rotors_job = job_manager.SlurmJob()
-        slurm_cmd = f"sbatch {slurm_run_file}"
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
 
-        # wait for fewer than MAX_JOBS_RUNNING jobs running
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(rotor_dir)
+    gaussian_rotors_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
         jobs_running = job_manager.count_slurm_jobs()
-        while jobs_running > MAX_JOBS_RUNNING:
-            time.sleep(60)
-            jobs_running = job_manager.count_slurm_jobs()
 
-        gaussian_rotors_job.submit(slurm_cmd)
-        os.chdir(start_dir)
+    gaussian_rotors_job.submit(slurm_cmd)
+    os.chdir(start_dir)
 
 
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
