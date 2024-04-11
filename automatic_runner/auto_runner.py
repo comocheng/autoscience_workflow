@@ -1,19 +1,21 @@
-# script to automatically run reaction calculations based on what's in the yaml
+# script to automatically run reaction calculations based on what's in the mech_summary_DATE.csv
 # The way this will work is that it will check every hour to see if there are fewer than 50 jobs running.
-# If there are fewer than 50, it will spawn 5 new reaction calculations based on what's in the top_calculations yaml
+# If there are fewer than 50, it will spawn 5 new reaction calculations based on what's
+# in the CSV, stopping at the top 10 - the only ones required to run the next RMG run
 
 
 import os
 import sys
 import time
-import yaml
 import datetime
 import subprocess
+import pandas as pd
 import job_manager
 sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/dft/')
 import autotst_wrapper
 
 
+STOP_AFTER = 10  # only focus on top 10 reactions/species that are possible
 N_CALCULATIONS_TO_SPAWN = 5
 MAX_JOBS_RUNNING = 50
 try:
@@ -49,15 +51,17 @@ def check_index_running(idx):
 
 autotst_familes = ['disproportionation', 'intra_h_migration', 'h_abstraction', 'r_addition_multiple_bond']
 printlog('Starting Automated Runner')
-# open the yaml file to see what's left to calculate
-try:
-    calculation_list_file = sys.argv[1]
-except IndexError:
-    calculation_list_file = os.path.join(autotst_wrapper.DFT_DIR, 'top_calculations.yaml')
 
-while True:  # this will just run until the job gets deleted or it runs out of things to calculate
 
+# open the csv file to see what we should calculate. MUST BE PROVIDED AS INPUT
+calculation_list_file = sys.argv[1]
+mech_summary = pd.read_csv(calculation_list_file, index_col=0)
+
+successful_calculations = 0
+possible_index = 0  # for counting which reactions are possible to calculate
+while True:
     # count how many jobs are currently running
+    # sleep if there's no room for more things to run
     jobs_running = job_manager.count_slurm_jobs()
     while jobs_running > MAX_JOBS_RUNNING:
         time.sleep(5.0 * 60.0)  # check every 5 minutes?
@@ -67,65 +71,37 @@ while True:  # this will just run until the job gets deleted or it runs out of t
     calculations_spawned = 0
     i = 0
     while calculations_spawned < N_CALCULATIONS_TO_SPAWN:
-        with open(calculation_list_file, 'r') as f:
-            top_calculations = yaml.safe_load(f)
+        if possible_index >= STOP_AFTER and successful_calculations < STOP_AFTER:
+            printlog(f'Done calculating {STOP_AFTER}. {successful_calculations} successful. Restarting at beginning.')
+            successful_calculations = 0
+            possible_index = 0
+            break
+        elif successful_calculations >= STOP_AFTER:
+            printlog(f'SUCCESS CALCULATING TOP {STOP_AFTER}. QUITTING...')
+            exit(0)
 
-        if i > len(top_calculations):
+        if i > len(mech_summary):
             printlog('RAN OUT OF THINGS TO CALCULATE. QUITTING...')
             exit(0)
 
-        idx = top_calculations[i]['index']
+        idx = mech_summary['db_index'].values[i]
+        name = mech_summary['reaction'].values[i]
+        family = mech_summary['family'].values[i]
+        printlog(f'Examining Rank {i}, db index {idx}, type {family}, name {name}')
 
-        # Manual skip
-        try:
-            if top_calculations[i]['skip']:
-                printlog(f'Skipping MANUAL {top_calculations[i]["type"]} {idx} {top_calculations[i]["name"]}')
-                i += 1
-                continue
-        except KeyError:
-            pass
-
-        # skip because we've already tried this one and it didn't go well
-        try:
-            if top_calculations[i]['failed']:
-                printlog(f'Skipping FAILED {top_calculations[i]["type"]} {idx} {top_calculations[i]["name"]}')
-                i += 1
-                continue
-        except KeyError:
-            pass
-
-        # Check if already complete
-        # need to look for the file directly
-        if autotst_wrapper.arkane_reaction_complete(idx):
-            try:
-                printlog(f'{top_calculations[i]["type"]} {idx} {top_calculations[i]["name"]} already ran. Skipping...')
-                i += 1
-                continue
-            except KeyError:
-                pass
+        # if it is not possible to calculate, move on to the next thing
+        if family.lower() not in autotst_familes and family != 'species':
+            printlog(f'Skipping incompatible calculation {idx} {family} {name}')
+            continue
 
         # -------------------------- Calculate Species ----------------------------- #
-        if top_calculations[i]['type'] == 'species':
-            printlog(f'Calculating species {idx}: {top_calculations[i]["name"]}')
+        if family == 'species':
+            printlog(f'Calculating species {idx}: {name}')
 
             if autotst_wrapper.arkane_species_complete(idx):
-                print(f'Species {idx} {top_calculations[i]["name"]} already ran')
-                top_calculations[i]['complete'] = True
-                with open(calculation_list_file, 'w') as f:
-                    yaml.dump(top_calculations, f)
-                i += 1
-                continue
-
-            # skip because we've already tried this one and it didn't go well
-            calc_name = f'species {idx}'
-            if calc_name in previous_attempts:
-                printlog(f'Skipping PREVIOUSLY ATTEMPTED {top_calculations[i]["type"]} {idx} {top_calculations[i]["name"]}')
-                printlog(f'Marking failed')
-                
-                top_calculations[i]['failed'] = True
-                with open(calculation_list_file, 'w') as f:
-                    yaml.dump(top_calculations, f)
-
+                print(f'Species {idx}: {name} already ran')
+                successful_calculations += 1
+                possible_index += 1
                 i += 1
                 continue
 
@@ -133,137 +109,31 @@ while True:  # this will just run until the job gets deleted or it runs out of t
             subprocess.run(['python', os.path.join(DFT_DIR, 'run_species.sh'), idx])
             calculations_spawned += 1
             i += 1
-            previous_attempts.append(calc_name)
-
         # ------------------------- Calculate Reaction ----------------------------- #
-        elif top_calculations[i]['type'] == 'reaction':
-            printlog(f'Calculating reaction {idx}: {top_calculations[i]["name"]}')
-            # raise NotImplementedError
-
-            # Skip if family isn't in AutoTST:
-            try:
-                if top_calculations[i]['family'].lower() not in autotst_familes:
-                    print(f'Reaction {idx} {top_calculations[i]["name"]} is family {top_calculations[i]["family"]} which is not in AutoTST. Skipping...')
-                    top_calculations[i]['skip'] = True
-                    i += 1
-                    continue
-            except KeyError:
-                pass
+        else:
+            printlog(f'Calculating reaction {idx}: {name}')
 
             if autotst_wrapper.arkane_reaction_complete(idx):
-                printlog(f'Reaction {idx} {top_calculations[i]["name"]} already ran')
-                top_calculations[i]['complete'] = True
-                with open(calculation_list_file, 'w') as f:
-                    yaml.dump(top_calculations, f)
+                printlog(f'Reaction {idx}: {name} already ran. Skipping...')
+                successful_calculations += 1
+                possible_index += 1
                 i += 1
                 continue
-
 
             # make sure that index isn't currently running:
             if check_index_running(idx):
                 # run something else while we wait for this to finish
-                printlog(f'Index {idx} is still running, so move on to something else')
+                printlog(f'Reaction {idx}: {name} is still running, so move on to something else')
+                possible_index += 1
                 i += 1
                 continue
 
-            # get status from grep of logfiles
-            cmd = f'grep -l Normal {DFT_DIR}/kinetics/reaction_{idx:06}/shell/*_*.log'
-            my_shells = subprocess.run(cmd, capture_output=True, shell=True)
-            shell_results = my_shells.stdout.decode('utf-8').split()
-
-            cmd = f'grep -l Normal {DFT_DIR}/kinetics/reaction_{idx:06}/center/*_*.log'
-            my_shells = subprocess.run(cmd, capture_output=True, shell=True)
-            center_results = my_shells.stdout.decode('utf-8').split()
-
-            cmd = f'grep -l Normal {DFT_DIR}/kinetics/reaction_{idx:06}/overall/*_*.log'
-            my_shells = subprocess.run(cmd, capture_output=True, shell=True)
-            overall_results = my_shells.stdout.decode('utf-8').split()
-
-            # ------------------------------- Run Shell ------------------------------- #
-            if not shell_results:
-                # SKIP if we already tried this
-                calc_name = f'reaction {idx} shell'
-                if calc_name in previous_attempts:
-                    printlog(f'Skipping PREVIOUSLY ATTEMPTED {top_calculations[i]["type"]} {idx} shell {top_calculations[i]["name"]}')
-                    printlog(f'Marking failed')
-                    
-                    top_calculations[i]['failed'] = True
-                    with open(calculation_list_file, 'w') as f:
-                        yaml.dump(top_calculations, f)
-
-                    i += 1
-                    continue
-
-                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_shell6.sh'), str(idx)])
-                calculations_spawned += 1
-                i += 1
-                previous_attempts.append(calc_name)
-
-            # ------------------------------- Run Center ------------------------------- #
-            elif not center_results:          
-                # SKIP if we already tried this
-                calc_name = f'reaction {idx} center'
-                if calc_name in previous_attempts:
-                    printlog(f'Skipping PREVIOUSLY ATTEMPTED {top_calculations[i]["type"]} {idx} center {top_calculations[i]["name"]}')
-                    printlog(f'Marking failed')
-                    
-                    top_calculations[i]['failed'] = True
-                    with open(calculation_list_file, 'w') as f:
-                        yaml.dump(top_calculations, f)
-
-                    i += 1
-                    continue
-
-                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_center6.sh'), str(idx)])
-                calculations_spawned += 1
-                i += 1
-                previous_attempts.append(calc_name)
-            # ------------------------------- Run Overall ------------------------------- #
-            elif not overall_results:          
-                # SKIP if we already tried this
-                calc_name = f'reaction {idx} overall'
-                if calc_name in previous_attempts:
-                    printlog(f'Skipping PREVIOUSLY ATTEMPTED {top_calculations[i]["type"]} {idx} overall {top_calculations[i]["name"]}')
-                    printlog(f'Marking failed')
-                    
-                    top_calculations[i]['failed'] = True
-                    with open(calculation_list_file, 'w') as f:
-                        yaml.dump(top_calculations, f)
-
-                    i += 1
-                    continue
-
-                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_overall6.sh'), str(idx)])
-                calculations_spawned += 1
-                i += 1
-                previous_attempts.append(calc_name)
-
-            # ------------------------------ Run Arkane ---------------------------------- #
-            elif not autotst_wrapper.arkane_reaction_complete(idx):
-                # SKIP if we already tried this
-                calc_name = f'reaction {idx} arkane'
-                if calc_name in previous_attempts:
-                    printlog(f'Skipping PREVIOUSLY ATTEMPTED {top_calculations[i]["type"]} {idx} arkane {top_calculations[i]["name"]}')
-                    printlog(f'Marking failed')
-                    
-                    top_calculations[i]['failed'] = True
-                    with open(calculation_list_file, 'w') as f:
-                        yaml.dump(top_calculations, f)
-
-                    i += 1
-                    continue
-                subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_reaction_arkane6.sh'), str(idx)])
-                calculations_spawned += 1
-                i += 1
-                previous_attempts.append(calc_name)
-
-            else:
-                printlog(f'Marking this reaction {idx} {top_calculations[i]["name"]} as complete')
-                top_calculations[i]['complete'] = True
-                with open(calculation_list_file, 'w') as f:
-                    yaml.dump(top_calculations, f)
-                i += 1
-                continue
+            # ------------------------------- Run Reaction Calc ------------------------------- #
+            printlog(f'Running whole reaction calculation for {idx}: {name}')
+            subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_whole_reaction.sh'), str(idx)])
+            calculations_spawned += 1
+            possible_index += 1
+            i += 1
 
     # wait an hour before attempting to spawn another set of jobs
     wait_minutes = 60.0
