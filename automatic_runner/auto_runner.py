@@ -92,6 +92,7 @@ while True:
         # if it is not possible to calculate, move on to the next thing
         if family.lower() not in autotst_familes and family != 'species':
             printlog(f'Skipping incompatible calculation {idx} {family} {name}')
+            i += 1
             continue
 
         # -------------------------- Calculate Species ----------------------------- #
@@ -136,6 +137,6 @@ while True:
             i += 1
 
     # wait an hour before attempting to spawn another set of jobs
-    wait_minutes = 60.0
+    wait_minutes = 1.0
     printlog(f'Waiting {wait_minutes} minutes for jobs to get on the queue')
     time.sleep(wait_minutes * 60.0)
