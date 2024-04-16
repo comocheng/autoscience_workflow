@@ -15,7 +15,7 @@ sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/dft/'
 import autotst_wrapper
 
 
-STOP_AFTER = 10  # only focus on top 10 reactions/species that are possible
+STOP_AFTER = 20  # only focus on top 10 reactions/species that are possible
 N_CALCULATIONS_TO_SPAWN = 5
 MAX_JOBS_RUNNING = 50
 try:
@@ -132,11 +132,13 @@ while True:
             # ------------------------------- Run Reaction Calc ------------------------------- #
             printlog(f'Running whole reaction calculation for {idx}: {name}')
             subprocess.run(['sbatch', os.path.join(DFT_DIR, 'run_whole_reaction.sh'), str(idx)])
+            # TODO put a job name here in the sbatch command so I can see the reaction number on the queue
             calculations_spawned += 1
             possible_index += 1
             i += 1
 
-    # wait an hour before attempting to spawn another set of jobs
-    wait_minutes = 1.0
+    # wait a while before attempting to spawn another set of jobs. This is because the screen
+    # conformers phase takes a few minutes and then spawns many jobs
+    wait_minutes = 30.0
     printlog(f'Waiting {wait_minutes} minutes for jobs to get on the queue')
     time.sleep(wait_minutes * 60.0)
