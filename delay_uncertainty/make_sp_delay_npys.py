@@ -12,7 +12,7 @@ import subprocess
 # get the table index from input for easy parallelization
 
 chemkin = sys.argv[1]
-
+aramco = False
 experimental_table_index = int(sys.argv[2])
 
 # # chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
@@ -38,12 +38,40 @@ def perturb_species(species, delta):
         poly.coeffs = new_coeffs
 
 
-def perturb_reaction(rxn, delta):
+def perturb_reaction(rxn, delta):  # 0.1 is default
     # takes in an RMG reaction object
     # delta is the ln(k) amount to perturb the A factor
     # delta is a multiplicative factor- units don't matter, yay!
     # does not deepycopy because there's some issues with rmgpy.reactions copying
-    rxn.kinetics.A.value *= np.exp(delta)
+    if type(rxn.kinetics) == rmgpy.kinetics.chebyshev.Chebyshev:
+        rxn.kinetics.coeffs.value_si[0][0] += np.log10(1.0 + delta)
+    elif type(rxn.kinetics) in [rmgpy.kinetics.falloff.Troe, rmgpy.kinetics.falloff.ThirdBody, rmgpy.kinetics.falloff.Lindemann]:
+        if hasattr(rxn.kinetics, 'arrheniusHigh'):
+            rxn.kinetics.arrheniusHigh.A.value *= np.exp(delta)
+        if hasattr(rxn.kinetics, 'arrheniusLow'):
+            rxn.kinetics.arrheniusLow.A.value *= np.exp(delta)
+    elif type(rxn.kinetics) == rmgpy.kinetics.arrhenius.MultiArrhenius:
+        for j in range(len(rxn.kinetics.arrhenius)):
+            rxn.kinetics.arrhenius[j].A.value *= np.exp(delta)
+    elif type(rxn.kinetics) == rmgpy.kinetics.arrhenius.PDepArrhenius:
+        for j in range(len(rxn.kinetics.arrhenius)):
+            if type(rxn.kinetics.arrhenius[j]) == rmgpy.kinetics.arrhenius.Arrhenius:
+                rxn.kinetics.arrhenius[j].A.value *= np.exp(delta)
+            else:
+                raise ValueError(f'weird kinetics {str(rxn.kinetics)}')
+    elif type(rxn.kinetics) == rmgpy.kinetics.arrhenius.MultiPDepArrhenius:
+        for i in range(len(rxn.kinetics.arrhenius)):
+            for j in range(len(rxn.kinetics.arrhenius[i].arrhenius)):
+                if type(rxn.kinetics.arrhenius[i].arrhenius[j]) == rmgpy.kinetics.arrhenius.Arrhenius:
+                    rxn.kinetics.arrhenius[i].arrhenius[j].A.value *= np.exp(delta)
+                elif type(rxn.kinetics.arrhenius[i].arrhenius[j]) == rmgpy.kinetics.arrhenius.MultiArrhenius:
+                    for k in range(len(rxn.kinetics.arrhenius[i].arrhenius[j].arrhenius)):
+                        rxn.kinetics.arrhenius[i].arrhenius[j].arrhenius[k].A.value *= np.exp(delta)
+                else:
+                    raise ValueError(f'weird kinetics {str(rxn.kinetics)}')
+
+    else:  # Arrhenius
+        rxn.kinetics.A.value *= np.exp(delta)
 
 
 transport = os.path.join(working_dir, 'tran.dat')
@@ -164,42 +192,77 @@ phi7 = table_exp['phi'].values  # equivalence ratios
 # Mixture compositions taken from table 2 of
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
 concentrations = []
-if phi7[0] == 0.3:
-    x_diluent = 0.7821
-    conc_dict = {
-        'O2(2)': 0.2083,
-        'butane(1)': 0.00962
-    }
-elif phi7[0] == 0.5:
-    x_diluent = 0.7771
-    conc_dict = {
-        'O2(2)': 0.2070,
-        'butane(1)': 0.01595
-    }
-elif phi7[0] == 1.0:
-    x_diluent = 0.7649
-    conc_dict = {
-        'O2(2)': 0.2038,
-        'butane(1)': 0.03135
-    }
-elif phi7[0] == 2.0:
-    x_diluent = 0.7416
-    conc_dict = {
-        'O2(2)': 0.1976,
-        'butane(1)': 0.06079
-    }
+if not aramco:
+    if phi7[0] == 0.3:
+        x_diluent = 0.7821
+        conc_dict = {
+            'O2(2)': 0.2083,
+            'butane(1)': 0.00962
+        }
+    elif phi7[0] == 0.5:
+        x_diluent = 0.7771
+        conc_dict = {
+            'O2(2)': 0.2070,
+            'butane(1)': 0.01595
+        }
+    elif phi7[0] == 1.0:
+        x_diluent = 0.7649
+        conc_dict = {
+            'O2(2)': 0.2038,
+            'butane(1)': 0.03135
+        }
+    elif phi7[0] == 2.0:
+        x_diluent = 0.7416
+        conc_dict = {
+            'O2(2)': 0.1976,
+            'butane(1)': 0.06079
+        }
+    else:
+        raise ValueError
+    for i in range(0, len(table_exp)):
+        x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
+        x_Ar = table_exp['%Ar'].values[i] / 100.0 * x_diluent
+        x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
+        conc_dict['N2'] = x_N2
+        conc_dict['Ar'] = x_Ar
+        conc_dict['CO2(7)'] = x_CO2
+        concentrations.append(conc_dict)
 else:
-    raise ValueError
+    if phi7[0] == 0.3:
+        x_diluent = 0.7821
+        conc_dict = {
+            'O2': 0.2083,
+            'C4H10': 0.00962
+        }
+    elif phi7[0] == 0.5:
+        x_diluent = 0.7771
+        conc_dict = {
+            'O2': 0.2070,
+            'C4H10': 0.01595
+        }
+    elif phi7[0] == 1.0:
+        x_diluent = 0.7649
+        conc_dict = {
+            'O2': 0.2038,
+            'C4H10': 0.03135
+        }
+    elif phi7[0] == 2.0:
+        x_diluent = 0.7416
+        conc_dict = {
+            'O2': 0.1976,
+            'C4H10': 0.06079
+        }
+    else:
+        raise ValueError
+    for i in range(0, len(table_exp)):
+        x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
+        x_Ar = table_exp['%Ar'].values[i] / 100.0 * x_diluent
+        x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
+        conc_dict['N2'] = x_N2
+        conc_dict['AR'] = x_Ar
+        conc_dict['CO2'] = x_CO2
+        concentrations.append(conc_dict)
 
-
-for i in range(0, len(table_exp)):
-    x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
-    x_Ar = table_exp['%Ar'].values[i] / 100.0 * x_diluent
-    x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
-    conc_dict['N2'] = x_N2
-    conc_dict['Ar'] = x_Ar
-    conc_dict['CO2(7)'] = x_CO2
-    concentrations.append(conc_dict)
 
 # just use the first concentration
 Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
