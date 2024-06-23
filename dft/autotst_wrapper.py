@@ -709,6 +709,157 @@ def run_rotors(species_index, increment_deg=20):
     os.chdir(start_dir)
 
 
+def setup_ts_rotors(reaction_index, increment_deg=30):
+    """Set up rotor scans for a TS complex
+    """
+    # TODO check complete
+    complete = False
+    if complete:
+        return
+
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
+    arkane_dir = os.path.join(reaction_dir, 'arkane')
+    rotor_dir = os.path.join(reaction_dir, 'rotors')
+    os.makedirs(rotor_dir, exist_ok=True)
+
+    rotor_str = 'rotor'
+
+    # check if the rotors were already set up
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
+    if rotor_logfiles:
+        reaction_log(reaction_index, 'TS rotors already set up')
+        return True
+    reaction_log(reaction_index, f'Starting TS rotor setup')
+
+    # # ------------------ Use Hotbit to screen the conformers ------------------
+    # Build the reaction TS complex
+    reaction_log(reaction_index, f'Building TS complex')
+    direction = 'forward'
+    rmg_reaction = database_fun.index2reaction(reaction_index)
+    reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
+    reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to this even though it's not dependable
+
+    # Get the lowest energy conformer from the overall result -- look in the arkane folder
+    reaction_log(reaction_index, f'Loading TS geometry from gaussian log file')
+    starting_geometry_file = glob.glob(os.path.join(arkane_dir, 'fwd_ts_*.log'))[0]
+    if not os.path.exists(starting_geometry_file) or get_termination_status(starting_geometry_file) != 0:
+        raise OSError('Could not find TS geometry file')
+    reaction.ts[direction][0]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
+    reaction.ts[direction][0].update_coords_from(mol_type="ase")
+
+    # get the rotors
+    torsions = reaction.ts[direction][0].get_torsions()
+    n_rotors = len(torsions)
+    if n_rotors == 0:
+        no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
+        with open(no_rotor_file, 'w') as f:
+            f.write('NO ROTORS')
+        reaction_log(reaction_index, "no rotors to calculate")
+        return True
+
+    print("generating gaussian input files")
+    for i, torsion in enumerate(reaction.ts[direction][0].torsions):
+        fname = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.com')
+        write_scan_file(fname, reaction.ts[direction][0], i, degree_delta=increment_deg)
+    return True
+
+
+def run_ts_rotors(reaction_index, increment_deg=30):
+    """Run the rotor scans that were set up"""
+    # TODO check for completion
+
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
+    rotor_dir = os.path.join(reaction_dir, 'rotors')
+
+    # skip running rotors if the NO_ROTORS file is present
+    no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
+    if os.path.exists(no_rotor_file):
+        reaction_log(reaction_index, f'No rotors to run. Skipping...')
+        return True
+
+    rotor_str = 'rotor'
+    suffix = ''
+
+    # check if the rotors were already completed (might setup rerun even if already ran once)
+    if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name=f'{rotor_str}_'):
+        return True  # already ran
+
+    reaction_log(reaction_index, f'Counting incomplete rotor scans (ran out of time)...')
+    rerun_indices = []
+    failed_indices = []
+    n_rotors = len(glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com')))
+    for i in range(0, n_rotors):
+        rotor_logfile = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.log')
+        if os.path.exists(rotor_logfile):
+            termination_status = get_termination_status(rotor_logfile)
+            if termination_status != 0:
+                failed_indices.append(i)
+            if termination_status == -1:
+                rerun_indices.append(i)
+                reaction_log(reaction_index, f'TS rotor {i} did not complete')
+
+    rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.log'))
+
+    if rotor_logfiles and not rerun_indices:
+        reaction_log(reaction_index, f'Some rotors {failed_indices} failed but there are no calculations left to run.')
+        return False
+
+    reaction_log(reaction_index, f'Starting rotor scans optimization job')
+    # Make slurm script to run all the rotor calculations
+    slurm_run_file = os.path.join(rotor_dir, f'run{suffix}.sh')
+    slurm_settings = {
+        '--job-name': f'g16_ts_rot_{reaction_index}',
+        '--error': 'error.log',
+        '--nodes': 1,
+        '--partition': 'short',
+        '--constraint': 'cascadelake',
+        '--mem': '20Gb',
+        '--time': '24:00:00',
+        '--cpus-per-task': 16,
+        '--array': f'0-{n_rotors - 1}%{MAX_JOBS_PER_TASK}',
+    }
+
+    if rerun_indices:
+        slurm_run_file = os.path.join(rotor_dir, f'rerun{suffix}.sh')
+        slurm_settings['--partition'] = 'short'
+        slurm_settings['--constraint'] = 'cascadelake'
+        slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
+        slurm_settings['--cpus-per-task'] = 32
+        slurm_settings.pop('--exclude')
+
+    slurm_file_writer = job_manager.SlurmJobFile(
+        full_path=slurm_run_file,
+    )
+    slurm_file_writer.settings = slurm_settings
+    slurm_file_writer.content = [
+        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+        'mkdir -p $GAUSS_SCRDIR\n',
+        'module load gaussian/g16\n',
+        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+        'fname="' + rotor_str + '_${RUN_i}.com"\n\n',
+
+        'g16 $fname\n',
+    ]
+    slurm_file_writer.write_file()
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(rotor_dir)
+    gaussian_rotors_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    gaussian_rotors_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
 def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     glob_str = os.path.join(base_dir, f'{base_name}*.com')
@@ -1136,9 +1287,9 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     rmg_reaction = database_fun.index2reaction(reaction_index)
     reaction_log(reaction_index, f'Constructing reaction in AutoTST...')
     # Note that AutoTST uses SMILES instead of adjacency list, but we'll worry about that later
-    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
-    # smiles = database_fun.reaction2smiles(rmg_reaction)
-    # reaction = autotst.reaction.Reaction(label=smiles)
+    # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)  # fails for reaction 748
+    smiles = database_fun.reaction2smiles(rmg_reaction)
+    reaction = autotst.reaction.Reaction(label=smiles)
     reaction.get_labeled_reaction()
     # TODO - log something about not finding a match if a match isn't found- see reaction #50 for example
 
