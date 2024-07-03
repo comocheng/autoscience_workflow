@@ -34,6 +34,15 @@ print(f'M={M}', 'reactions')
 
 all_delays_ever = np.zeros((N + M, 12 * K))
 
+sp7_file = os.path.join(table_dir, f'species_delays_{7:04}.npy')
+if not os.path.exists(sp7_file):
+    sp_files = glob.glob(os.path.join(mech_dir, 'table_0007', 'spec_delay_0007_*.npy'))
+    spec_delays = np.zeros((N, K))
+    for i in range(N):
+        spec_delays[i, :] = np.load(os.path.join(mech_dir, 'table_0007', f'spec_delay_0007_{i:04}.npy'))
+    np.save(os.path.join(mech_dir, 'table_0007', f'species_delays_0007.npy'), spec_delays)
+    # compile individual files into the overall species_delays_file
+
 
 for table_index in range(1, 13):
     table_dir = os.path.join(mech_dir, f'table_{table_index:04}')
@@ -42,8 +51,8 @@ for table_index in range(1, 13):
 
     # insert all the species delays for that table
     sp_file = os.path.join(table_dir, f'species_delays_{table_index:04}.npy')
-    if not os.path.exists(sp_file):
-        print(f'missing species delay file {sp_file}')
+    if table_index == 7 and not os.path.exists(sp_file):
+        print(f'missing species delay file 7: {sp_file}')
         continue
         raise OSError(f'missing species delay file {sp_file}')
 

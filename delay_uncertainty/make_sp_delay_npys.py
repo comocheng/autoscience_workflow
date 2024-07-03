@@ -10,22 +10,24 @@ import subprocess
 
 
 # get the table index from input for easy parallelization
-
+DELTA_J_MOL = 418.4  # J/mol, but equals 0.1 kcal/mol
+R = 8.3144598  # gas constant in J/mol
+DELTA = 0.01
 chemkin = sys.argv[1]
-aramco = False
-experimental_table_index = int(sys.argv[2])
+sp_index = int(sys.argv[2])
 
-# # chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
-# chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
-# # chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/improved_model/cutoff3_20230418.inp'
-# chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_rmg_1week/chem_annotated.inp'
+aramco = 'aramco' in chemkin.lower()
+
 
 working_dir = os.path.join(os.path.dirname(chemkin))
+experimental_table_index = 7  # workflow only requires calculating it here
+table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
+os.makedirs(table_dir, exist_ok=True)
 
 
 # perturb every species and reaction in the mechanism
 # we'll select the perturbations one at a time later in the script
-def perturb_species(species, delta):
+def perturb_species(species):
     # takes in an RMG species object
     # change the enthalpy offset
     increase = None
@@ -33,45 +35,49 @@ def perturb_species(species, delta):
         new_coeffs = poly.coeffs
         if not increase:
             # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
-            increase = delta * new_coeffs[5]
+            # increase = DELTA * new_coeffs[5]
+            increase = DELTA_J_MOL / R
         new_coeffs[5] += increase
         poly.coeffs = new_coeffs
 
 
-def perturb_reaction(rxn, delta):  # 0.1 is default
+def perturb_reaction(rxn):
     # takes in an RMG reaction object
     # delta is the ln(k) amount to perturb the A factor
     # delta is a multiplicative factor- units don't matter, yay!
     # does not deepycopy because there's some issues with rmgpy.reactions copying
     if type(rxn.kinetics) == rmgpy.kinetics.chebyshev.Chebyshev:
-        rxn.kinetics.coeffs.value_si[0][0] += np.log10(1.0 + delta)
+        rxn.kinetics.coeffs.value_si[0][0] += np.log10(1.0 + DELTA)
     elif type(rxn.kinetics) in [rmgpy.kinetics.falloff.Troe, rmgpy.kinetics.falloff.ThirdBody, rmgpy.kinetics.falloff.Lindemann]:
         if hasattr(rxn.kinetics, 'arrheniusHigh'):
-            rxn.kinetics.arrheniusHigh.A.value *= np.exp(delta)
+            rxn.kinetics.arrheniusHigh.A.value *= np.exp(DELTA)
         if hasattr(rxn.kinetics, 'arrheniusLow'):
-            rxn.kinetics.arrheniusLow.A.value *= np.exp(delta)
+            rxn.kinetics.arrheniusLow.A.value *= np.exp(DELTA)
     elif type(rxn.kinetics) == rmgpy.kinetics.arrhenius.MultiArrhenius:
         for j in range(len(rxn.kinetics.arrhenius)):
-            rxn.kinetics.arrhenius[j].A.value *= np.exp(delta)
+            rxn.kinetics.arrhenius[j].A.value *= np.exp(DELTA)
     elif type(rxn.kinetics) == rmgpy.kinetics.arrhenius.PDepArrhenius:
         for j in range(len(rxn.kinetics.arrhenius)):
             if type(rxn.kinetics.arrhenius[j]) == rmgpy.kinetics.arrhenius.Arrhenius:
-                rxn.kinetics.arrhenius[j].A.value *= np.exp(delta)
+                rxn.kinetics.arrhenius[j].A.value *= np.exp(DELTA)
+            elif type(rxn.kinetics.arrhenius[j]) == rmgpy.kinetics.arrhenius.MultiArrhenius:
+                for k in range(len(rxn.kinetics.arrhenius[j].arrhenius)):
+                    rxn.kinetics.arrhenius[j].arrhenius[k].A.value *= np.exp(DELTA)
             else:
                 raise ValueError(f'weird kinetics {str(rxn.kinetics)}')
     elif type(rxn.kinetics) == rmgpy.kinetics.arrhenius.MultiPDepArrhenius:
         for i in range(len(rxn.kinetics.arrhenius)):
             for j in range(len(rxn.kinetics.arrhenius[i].arrhenius)):
                 if type(rxn.kinetics.arrhenius[i].arrhenius[j]) == rmgpy.kinetics.arrhenius.Arrhenius:
-                    rxn.kinetics.arrhenius[i].arrhenius[j].A.value *= np.exp(delta)
+                    rxn.kinetics.arrhenius[i].arrhenius[j].A.value *= np.exp(DELTA)
                 elif type(rxn.kinetics.arrhenius[i].arrhenius[j]) == rmgpy.kinetics.arrhenius.MultiArrhenius:
                     for k in range(len(rxn.kinetics.arrhenius[i].arrhenius[j].arrhenius)):
-                        rxn.kinetics.arrhenius[i].arrhenius[j].arrhenius[k].A.value *= np.exp(delta)
+                        rxn.kinetics.arrhenius[i].arrhenius[j].arrhenius[k].A.value *= np.exp(DELTA)
                 else:
                     raise ValueError(f'weird kinetics {str(rxn.kinetics)}')
 
     else:  # Arrhenius
-        rxn.kinetics.A.value *= np.exp(delta)
+        rxn.kinetics.A.value *= np.exp(DELTA)
 
 
 transport = os.path.join(working_dir, 'tran.dat')
@@ -93,15 +99,16 @@ if not skip_create_perturb:
         # # write base cantera
         subprocess.run(['ck2yaml', f'--input={chemkin}', f'--transport={transport}', f'--output={base_yaml_path}'])
 
-        delta = 0.1
         for i in range(0, len(species_list)):
-            perturb_species(species_list[i], delta)
+            perturb_species(species_list[i])
 
         for i in range(0, len(reaction_list)):
-            try:
-                perturb_reaction(reaction_list[i], delta)
-            except AttributeError:
-                continue
+            perturb_reaction(reaction_list[i])
+
+            # try:
+            #     perturb_reaction(reaction_list[i])
+            # except AttributeError:
+            #     continue
 
         # save the results
         rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
@@ -274,8 +281,21 @@ temperatures = np.linspace(Tmin, Tmax, N)
 # compute and save the delays
 species_delays = np.zeros((len(perturbed_gas.species()), len(temperatures)))
 
-for i in range(0, len(perturbed_gas.species())):
+if sp_index >= len(perturbed_gas.species()):
+    print(f'Skipping species {sp_index} because not in model')
+    exit(-1)
+
+# for i in range(0, len(perturbed_gas.species())):
+for i in [sp_index]:
     print(f'perturbing {i} {perturbed_gas.species()[i]}')
+
+    spec_delay_file = os.path.join(table_dir, f'spec_delay_{experimental_table_index:04}_{i:04}.npy')
+    if os.path.exists(spec_delay_file):
+        print(f'skipping {i} because file already exists!')
+        delays = np.load(spec_delay_file)
+        species_delays[i, :] = delays
+        continue
+
     # load the base gas
     base_gas = ct.Solution(base_yaml_path)
 
@@ -296,7 +316,4 @@ for i in range(0, len(perturbed_gas.species())):
             delays[condition_index] = delay_time
     species_delays[i, :] = delays
 
-# save the result as a pandas dataframe
-table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
-os.makedirs(table_dir, exist_ok=True)
-np.save(os.path.join(table_dir, f'species_delays_{experimental_table_index:04}.npy'), species_delays)
+    np.save(spec_delay_file, delays)
