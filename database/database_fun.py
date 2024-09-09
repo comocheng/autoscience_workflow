@@ -224,3 +224,28 @@ def add_reaction_to_database(reaction_list):
     # load it back in to test that it worked
     reaction_df = pd.read_csv(reaction_csv)
     print(f'Reaction database now contains {len(reaction_df)} unique reactions')
+
+
+def find_reverses(reaction_index_list):
+    # Function to find any reactions in the database that are reverses of each other
+    # returns the dictionary that maps the reaction index to its reverse
+    # note, this doesn't work if the species are resonance structures of each other
+
+    reverses = {}
+    # load the reaction database
+    reaction_csv = os.path.join(DFT_DIR, 'reaction_database.csv')
+    reaction_df = pd.read_csv(reaction_csv)
+
+    for my_index in reaction_index_list:
+        unique_string = reaction_df[reaction_df['i'] == my_index]['unique_string'].values[0]
+        reverse_unique_string = unique_string.split('=')[-1] + '=' + unique_string.split('=')[0]
+        
+        reverse_indices = reaction_df[reaction_df['unique_string'] == reverse_unique_string]['i'].values
+        if reverse_indices.size > 0:
+            reverses[my_index] = int(reverse_indices[0])
+            reverses[int(reverse_indices[0])] = my_index
+        else:
+            reverses[my_index] = None
+
+    return reverses
+
