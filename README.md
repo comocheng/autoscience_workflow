@@ -13,5 +13,17 @@ The cycle of model improvement works as follows:
 6. Repeat model generation (step 1) and check for convergence
 7. Compare converged mechanism simulations to experimental data in literature
 
-
+# Instructions
+## 0. Installation
+- Install [RMG](https://rmg.mit.edu/) (Arkane is a component of RMG, and Cantera gets installed with the default RMG instructions, so no need to worry about those separately)
+- Scripts assume access to Gaussian 16 and SLURM workload manager
+- Install [AutoTST](https://github.com/ReactionMechanismGenerator/AutoTST), set the branch to [autotst_workflow](https://github.com/sevyharris/AutoTST/tree/autoscience_workflow)
+- Install [hotbit](https://github.com/pekkosk/hotbit). This does the fast/approximate geometry optimizations to narrow down the list of conformers to calculate with higher level of theory methods. If there is difficulty installing this, we recommend modifying the code to use [xtb](https://github.com/grimme-lab/xtb) as an alternative.
+## 1. Model Generation with RMG
+- Copy the example folder RMG_example_fuel_YYYYMMDD to a new location (some of the scripts use the date format, so we recommend keeping that)
+- Users are referred to the [RMG website](https://rmg.mit.edu/) for instructions on how to use RMG, but the basic gist is that you create an input.py file like the one in RMG_example_fuel_YYYYMMDD, then run RMG to generate the following additional files:
+  - chem_annotated.inp - contains the list of species and reactions for the mechanism along with thermodynamic and kinetic parameter values
+  - tran.dat - contains transport data
+  - species_dictionary.txt - contains bond connectivity information for each species
+  - (RMG generates a lot more files than these three, but these are the important ones for the autoscience workflow)
 
