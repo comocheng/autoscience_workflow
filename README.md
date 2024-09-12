@@ -28,6 +28,7 @@ The cycle of model improvement works as follows:
     - species_dictionary.txt - contains bond connectivity information for each species
     - (RMG generates a lot more files than these three, but these are the important ones for the autoscience workflow)
 - Modify the export_uncertainty.py script to include whichever libraries were included in the input.py file
+- You can check the ignition delay results against experiment with the plotting/check_mech.ipynb Jupyter Notebook. (Experimental data beside the Healy butane needs to be added manually)
     
 ## 2. Uncertainty and Sensitivity Analysis
 Run the "run_analysis.sh" script. It does the following:
@@ -43,10 +44,29 @@ Run the "run_analysis.sh" script. It does the following:
   - Negative improvement score means calculating the parameter and replacing the existing value will make the model worse
   - Saves top 200 ordered parameters to mechanism_YYYYMMDD.csv
 
-## 3. Calculate top 10 thermodynamic or kinetic parameters using DFT
+## 3. Calculate Parameters
 Run the run_autorunner.sh script. It does the following:
 - Uses AutoTST to make guesses about species or reaction transition-state geometries
 - Uses Gaussian 16 to run geometry optimizations and then energy and frequency calculations
 - Uses Arkane to compute thermodynamic and kinetic parameter values from Gaussian 16 logs and save in RMG library format
 
+## 4. Compile Calculations into Library for RMG
+- Run the compile_lib.ipynb Jupyter Notebook to generate the thermodynamics and kinetics library files.
+- This copies them into the RMG-database for use during the next phase of model generation
+
+## 5. Repeat Model Generation
+Return to step 1, but be sure to include the latest libraries in the input.py file
+
+To check if the model has converged (ignition delays are within 10% of previous values at all temperatures), run the plotting/check_converged.ipynb Notebook
+
+## 6. Compare to Experiments
+See plotting plotting/check_mech.ipynb and plotting/plot_subset_delays.ipynb Notebooks for examples of plotting ignition delays.
+
+Some other plots of interest:
+- local uncertainty
+- global uncertainty (have to run the Monte Carlo sampling script)
+- species flux comparison diagram
+- individual species thermodynamics
+- individual reaction kinetics
+- comparison of top sensitivities
 
