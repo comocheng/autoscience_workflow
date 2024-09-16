@@ -14,7 +14,7 @@ The cycle of model improvement works as follows:
 
 # Instructions
 ## 0. Installation
-- Install [RMG](https://rmg.mit.edu/) (Arkane is a component of RMG, and Cantera gets installed with the default RMG instructions, so no need to worry about those separately)
+- Install [RMG](https://rmg.mit.edu/) (Arkane is a component of RMG, and Cantera gets installed with the default RMG instructions, so no need to worry about those separately). Checkout the [autoscience_uncertainties](https://github.com/sevyharris/RMG-Py/tree/autoscience_uncertainties) branch to be able to export the uncertainty estimates of model parameters.
 - Scripts assume access to Gaussian 16 and SLURM workload manager
 - Install [AutoTST](https://github.com/ReactionMechanismGenerator/AutoTST), set the branch to [autotst_workflow](https://github.com/sevyharris/AutoTST/tree/autoscience_workflow)
 - Install [hotbit](https://github.com/pekkosk/hotbit). This does the fast/approximate geometry optimizations to narrow down the list of conformers to calculate with higher level of theory methods. If there is difficulty installing this, we recommend modifying the code to use [xtb](https://github.com/grimme-lab/xtb) as an alternative.
@@ -28,7 +28,7 @@ The cycle of model improvement works as follows:
     - species_dictionary.txt - contains bond connectivity information for each species
     - (RMG generates a lot more files than these three, but these are the important ones for the autoscience workflow)
 - Modify the export_uncertainty.py script to include whichever libraries were included in the input.py file
-- You can check the ignition delay results against experiment with the plotting/check_mech.ipynb Jupyter Notebook. (Experimental data beside the Healy butane needs to be added manually)
+- At this point (after generating the mechanism), you can check the ignition delay results against experiment with the plotting/check_mech.ipynb Jupyter Notebook. (Experimental data beside the Healy butane needs to be added manually)
     
 ## 2. Uncertainty and Sensitivity Analysis
 Run the "run_analysis.sh" script. It does the following:
