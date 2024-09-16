@@ -19,18 +19,19 @@ The cycle of model improvement works as follows:
 - Install [AutoTST](https://github.com/ReactionMechanismGenerator/AutoTST), set the branch to [autotst_workflow](https://github.com/sevyharris/AutoTST/tree/autoscience_workflow)
 - Install [hotbit](https://github.com/pekkosk/hotbit). This does the fast/approximate geometry optimizations to narrow down the list of conformers to calculate with higher level of theory methods. If there is difficulty installing this, we recommend modifying the code to use [xtb](https://github.com/grimme-lab/xtb) as an alternative.
 ## 1. Model Generation with RMG
-- Copy the example folder RMG_example_fuel_YYYYMMDD to a new location (some of the scripts use the date format, so we recommend keeping that)
-- Users are referred to the [RMG website](https://rmg.mit.edu/) for more complete instructions on how to use RMG, but the basic gist is this:
+- Create a new RMG run folder by copying the example folder RMG_example_fuel_YYYYMMDD to a new location (some of the scripts use the date format, so we recommend keeping that)
+- Run RMG. Users are referred to the [RMG website](https://rmg.mit.edu/) for more complete instructions on how to use RMG, but the basic gist is this:
   - Create/modify the input.py file like the one in RMG_example_fuel_YYYYMMDD to specify the reactants you are investigating and which libraries to include
   - Run RMG to generate the following additional files:
-    - chem_annotated.inp - contains the list of species and reactions for the mechanism along with thermodynamic and kinetic parameter values
-    - tran.dat - contains transport data
-    - species_dictionary.txt - contains bond connectivity information for each species
-    - (RMG generates a lot more files than these three, but these are the important ones for the autoscience workflow)
-- Modify the export_uncertainty.py script to include whichever libraries were included in the input.py file
-- At this point (after generating the mechanism), you can check the ignition delay results against experiment with the plotting/check_mech.ipynb Jupyter Notebook. (Experimental data beside the Healy butane needs to be added manually)
+    - chemkin/chem_annotated.inp - contains the list of species and reactions for the mechanism along with thermodynamic and kinetic parameter values
+    - chemkin/tran.dat - contains transport data
+    - chemkin/species_dictionary.txt - contains bond connectivity information for each species
+    - (RMG generates a lot more files than these three, but these are the required ones for the autoscience workflow)
+- Modify the export_uncertainty.py script to specify the libraries that were included in the input.py file
+- At this point (after generating the mechanism), you can do a quick check of the ignition delay results against experiment with the plotting/check_mech.ipynb Jupyter Notebook. (Experimental data beside the Healy butane needs to be added manually)
     
 ## 2. Uncertainty and Sensitivity Analysis
+Make sure the libraries have been correctly specified in the /path/to/your/copy/of/RMG_example_fuel_YYYYMMDD/export_uncertainty.py script (wherever you have copied it to).
 Run the "run_analysis.sh" script. It does the following:
 - Uncertainty Analysis
   - runs export_uncertainty.py, which generates two numpy files containing the list of species and reaction uncertainties:
