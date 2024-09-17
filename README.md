@@ -21,10 +21,10 @@ The cycle of model improvement works as follows:
 ## 1. Model Generation with RMG
 Users are referred to the [RMG website](https://rmg.mit.edu/) for more complete instructions on how to use RMG, but the basic gist is this:
 - Copy RMG_example_fuel_YYYYMMDD to a new location and modify the input.py file (or create your own) to specify the reactants you are investigating, the reactor conditions of interest, and which libraries to include.
-- Run rmg.py with the command `python-jl /path/to/RMG-Py/rmg.py input.py` to generate the mechanism. This will probably take on the order of days, depending on the size of the mechanism you intend to build. RMG will generate many files, but these three are required for the autoscience workflow:
-  - chemkin/chem_annotated.inp - contains the list of species and reactions for the mechanism along with thermodynamic and kinetic parameter values
-  - chemkin/tran.dat - contains transport data
-  - chemkin/species_dictionary.txt - contains bond connectivity information for each species
+- Run rmg.py with the command `python-jl /path/to/RMG-Py/rmg.py input.py` to generate the mechanism. This will probably take on the order of days, depending on the size of the mechanism you intend to build. RMG will generate many files, but these three RMG outputs are required for the autoscience workflow. An example of each has been copied into the example folder (NOTE that RMG is not completely deterministic and the same input file can result in slightly different mechanisms):
+  - chem_annotated.inp - contains the list of species and reactions for the mechanism along with thermodynamic and kinetic parameter values
+  - tran.dat - contains transport data
+  - species_dictionary.txt - contains bond connectivity information for each species
 
 Once the model is generated you can do a quick check of the ignition delay results with the [plotting/check_mech.ipynb](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/check_mech.ipynb) Jupyter Notebook.
     
