@@ -13,4 +13,4 @@
 # this 50 must match the 50 in the for loop (line 229) of make_rxn_delay_npys.py
 start_index=$(($SLURM_ARRAY_TASK_ID * 50))
 
-python /work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/make_rxn_delay_npys.py $1 7 $start_index
+python $AUTOSCIENCE_REPO/analysis/make_rxn_delay_npys.py $1 7 $start_index

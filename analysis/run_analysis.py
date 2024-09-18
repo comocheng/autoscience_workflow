@@ -55,7 +55,7 @@ else:
 
 # Step 1. Add the mechanism to the database
 printlog(f'Launching Add Mechanism to Database')
-add_mech_script = os.path.join(AUTOSCIENCE_REPO, '/database/run_add_mech_to_db.sh')
+add_mech_script = os.path.join(AUTOSCIENCE_REPO, 'database', 'run_add_mech_to_db.sh')
 job = job_manager.SlurmJob()
 slurm_cmd = f"sbatch {add_mech_script} {chemkin_file}"
 job.submit(slurm_cmd)
@@ -68,7 +68,7 @@ printlog(f'Done adding Mechanism to Database')
 # Step 2. Run the species delays if they're not all done
 if not os.path.exists(os.path.join(working_dir, 'table_0007', 'species_delays_0007.npy')):
     printlog('Running the species delays')
-    run_species_delays_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_sp_delays.sh'
+    run_species_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_sp_delays.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {run_species_delays_script} {chemkin_file}"
     job.submit(slurm_cmd)
@@ -82,7 +82,7 @@ else:
 # Step 3. Run the base delays if they're not all done
 if not os.path.exists(os.path.join(working_dir, 'table_0007', 'base_delays_0007.npy')):
     printlog('Running the base delays')
-    run_base_delays_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_base_delays.sh'
+    run_base_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_base_delays.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {run_base_delays_script} {chemkin_file}"
     job.submit(slurm_cmd)
@@ -96,7 +96,7 @@ else:
 # Step 4. Run the reaction delays if they're not all done
 if not os.path.exists(os.path.join(working_dir, 'table_0007', 'reaction_delays_0007_1200.npy')):
     printlog('Running the base delays')
-    run_rxn_delays_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_rxn_delay_parallel_table7.sh'
+    run_rxn_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_rxn_delay_parallel_table7.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {run_rxn_delays_script} {chemkin_file}"
     job.submit(slurm_cmd)
@@ -110,7 +110,7 @@ else:
 if not os.path.exists(os.path.join(working_dir, 'total_perturbed_mech_delays.npy')) or \
         not os.path.exists(os.path.join(working_dir, 'total_base_delays.npy')):
     printlog('Compiling sensitivity results')
-    compile_sensitivity_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/compile_sensitivity.sh'
+    compile_sensitivity_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'compile_sensitivity.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {compile_sensitivity_script} {chemkin_file}"
     job.submit(slurm_cmd)
@@ -122,7 +122,7 @@ else:
 
 # Step 6. Calculate and save the improvement scores using sensitivity and uncertainty
 printlog('Calculating Improvement Scores')
-export_improvement_script = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/run_export_improvement.sh'
+export_improvement_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_export_improvement.sh')
 job = job_manager.SlurmJob()
 slurm_cmd = f"sbatch {export_improvement_script} {chemkin_file}"
 job.submit(slurm_cmd)
