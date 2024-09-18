@@ -14,8 +14,9 @@ The cycle of model improvement works as follows:
 
 # Instructions
 ## 0. Installation
+- Set the `$AUTOSCIENCE_REPO` environment variable to point to your local copy of the autoscience_workflow repository. You can add the following line to your .bashrc to do it for you: `export AUTOSCIENCE_REPO="/path/to/your/copy/of/autoscience_workflow"` Many of the scripts depend on this.
 - Install [RMG](https://rmg.mit.edu/) (Arkane is a component of RMG, and Cantera gets installed with the default RMG instructions, so no need to worry about those separately). Checkout the [autoscience_uncertainties](https://github.com/sevyharris/RMG-Py/tree/autoscience_uncertainties) branch to be able to export the uncertainty estimates of model parameters.
-- Scripts assume access to Gaussian 16 and SLURM workload manager
+- Scripts assume access to Gaussian 16 and SLURM workload manager. They also use this [job manager](https://github.com/sevyharris/job_manager) package which contains many helper functions related to starting and waiting for SLURM jobs.
 - Install [AutoTST](https://github.com/ReactionMechanismGenerator/AutoTST), set the branch to [autotst_workflow](https://github.com/sevyharris/AutoTST/tree/autoscience_workflow)
 - Install [hotbit](https://github.com/pekkosk/hotbit). This does the fast/approximate geometry optimizations to narrow down the list of conformers to calculate with higher level of theory methods. If there is difficulty installing this, we recommend modifying the code to use [xtb](https://github.com/grimme-lab/xtb) as an alternative.
 ## 1. Model Generation with RMG
@@ -33,7 +34,7 @@ Update the libraries in the [analysis/export_uncertainty.py](https://github.com/
 
 Run the [analysis/run_analysis.py](https://github.com/comocheng/autoscience_workflow/blob/main/analysis/run_analysis.py) script by calling `sbatch analysis/run_analysis.sh path/to/chem_annotated.inp` It does the following:
 - Uncertainty Analysis
-  - runs export_uncertainty.py, which generates two numpy files containing the list of species and reaction uncertainties:
+  - Runs export_uncertainty.py, which generates two numpy files containing the list of species and reaction uncertainties:
     - gao_species_uncertainties.npy
     - gao_reaction_uncertainties.npy
 - Sensitivity Analysis (sensitivity of ignition delay to model parameters)
