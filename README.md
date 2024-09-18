@@ -29,7 +29,7 @@ Users are referred to the [RMG website](https://rmg.mit.edu/) for more complete 
 Once the model is generated you can do a quick check of the ignition delay results with the [plotting/check_mech.ipynb](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/check_mech.ipynb) Jupyter Notebook.
     
 ## 2. Uncertainty and Sensitivity Analysis
-Make sure the libraries have been correctly specified in the /path/to/your/copy/of/RMG_example_fuel_YYYYMMDD/export_uncertainty.py script (wherever you have copied it to).
+Update the libraries in the [analysis/export_uncertainty.py script](https://github.com/comocheng/autoscience_workflow/blob/main/analysis/export_uncertainty.py) to match the exact order of libraries that were used to generate the mechanism.
 
 Run the "run_analysis.sh" script. It does the following:
 - Uncertainty Analysis
