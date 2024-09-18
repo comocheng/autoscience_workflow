@@ -21,6 +21,8 @@ if working_dir.endswith('.inp'):
 elif working_dir.endswith('.yaml'):
     working_dir = os.path.dirname(working_dir)
 chemkin_file = os.path.join(working_dir, 'chem_annotated.inp')
+if working_dir == '':
+    working_dir = '.'
 
 start_dir = os.getcwd()
 os.chdir(working_dir)
@@ -28,6 +30,7 @@ os.chdir(working_dir)
 logfile = os.path.join(working_dir, 'analysis.log')
 
 AUTOSCIENCE_REPO = os.environ['AUTOSCIENCE_REPO']
+assert AUTOSCIENCE_REPO != ''
 
 
 def printlog(message):
@@ -44,7 +47,7 @@ reaction_uncertainty_file = os.path.join(os.path.dirname(chemkin_file), 'gao_rea
 if os.path.exists(species_uncertainty_file) and os.path.exists(reaction_uncertainty_file):
     printlog('Skipping uncertainty estimation because uncertainty files already exist')
 else:
-    export_uncertainty_script = os.path.join(AUTOSCIENCE_REPO, '/analysis/export_uncertainty.sh')
+    export_uncertainty_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'export_uncertainty.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {export_uncertainty_script} {chemkin_file}"
     job.submit(slurm_cmd)
