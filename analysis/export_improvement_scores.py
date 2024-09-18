@@ -33,6 +33,11 @@ base_chemkin = os.path.join(basedir, 'chem_annotated.inp')
 dictionary = os.path.join(basedir, 'species_dictionary.txt')
 transport = os.path.join(basedir, 'tran.dat')
 
+# convert chemkin to cantera if it doesn't already exist
+if not os.path.exists(cantera_file):
+    subprocess.run(['ck2yaml', f'--input={input_chemkin}', f'--transport={transport}', f'--output={cantera_file}'])
+
+
 species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(base_chemkin, dictionary_path=dictionary, transport_path=transport, use_chemkin_names=True)
 
 gas = ct.Solution(cantera_file)
@@ -40,6 +45,7 @@ perturbed_cti_path = os.path.join(basedir, 'perturbed.yaml')
 perturbed_gas = ct.Solution(perturbed_cti_path)
 
 # This cti -> rmg converter dictionary can be made using rmg_tools/ct2rmg_dict.py
+# rmg_tools can be found here: https://github.com/sevyharris/rmg_tools/tree/main
 RMG_TOOLS_DIR = '/home/harris.se/rmg/rmg_tools'
 if not os.path.exists(os.path.join(basedir, 'ct2rmg_rxn.pickle')):
     print('Creating ct2rmg pickle')

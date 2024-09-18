@@ -21,6 +21,17 @@ mech_dir = os.path.dirname(mech_file)
 # .........
 # reaction M
 
+# Compile the species sensitivities if that hasn't been done yet
+sp_delay_file = os.path.join(mech_dir, 'table_0007', 'species_delays_0007.npy')
+if not os.path.exists(sp_delay_file):
+    sp_files = glob.glob(os.path.join(mech_dir, 'table_0007', 'spec_delay_0007_*.npy'))
+    N = len(sp_files)
+    K = 51
+    spec_delays = np.zeros((N, K))
+    for i in range(N):
+        spec_delays[i, :] = np.load(os.path.join(mech_dir, 'table_0007', f'spec_delay_0007_{i:04}.npy'))
+    np.save(os.path.join(mech_dir, 'table_0007', f'species_delays_0007.npy'), spec_delays)
+
 
 # load examples to get the right size
 test_sp_file = os.path.join(mech_dir, 'table_0007', 'species_delays_0007.npy')
