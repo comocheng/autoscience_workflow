@@ -58,7 +58,7 @@ else:
 
 # Step 1. Add the mechanism to the database
 printlog(f'Launching Add Mechanism to Database')
-add_mech_script = os.path.join(AUTOSCIENCE_REPO, 'database', 'run_add_mech_to_db.sh')
+add_mech_script = os.path.join(AUTOSCIENCE_REPO, 'database', 'add_mechanism_to_database.sh')
 job = job_manager.SlurmJob()
 slurm_cmd = f"sbatch {add_mech_script} {chemkin_file}"
 job.submit(slurm_cmd)
@@ -71,7 +71,7 @@ printlog(f'Done adding Mechanism to Database')
 # Step 2. Run the species delays if they're not all done
 if not os.path.exists(os.path.join(working_dir, 'table_0007', 'species_delays_0007.npy')):
     printlog('Running the species delays')
-    run_species_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_sp_delays.sh')
+    run_species_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'make_sp_delay_npys.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {run_species_delays_script} {chemkin_file}"
     job.submit(slurm_cmd)
@@ -99,7 +99,7 @@ else:
 # Step 4. Run the reaction delays if they're not all done
 if not os.path.exists(os.path.join(working_dir, 'table_0007', 'reaction_delays_0007_1200.npy')):
     printlog('Running the base delays')
-    run_rxn_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_rxn_delay_parallel_table7.sh')
+    run_rxn_delays_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'make_rxn_delay_npys.sh')
     job = job_manager.SlurmJob()
     slurm_cmd = f"sbatch {run_rxn_delays_script} {chemkin_file}"
     job.submit(slurm_cmd)
@@ -125,7 +125,7 @@ else:
 
 # Step 6. Calculate and save the improvement scores using sensitivity and uncertainty
 printlog('Calculating Improvement Scores')
-export_improvement_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'run_export_improvement.sh')
+export_improvement_script = os.path.join(AUTOSCIENCE_REPO, 'analysis', 'export_improvement_scores.sh')
 job = job_manager.SlurmJob()
 slurm_cmd = f"sbatch {export_improvement_script} {chemkin_file}"
 job.submit(slurm_cmd)

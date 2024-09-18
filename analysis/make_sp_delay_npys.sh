@@ -7,3 +7,4 @@
 
 
 python $AUTOSCIENCE_REPO/analysis/make_sp_delay_npys.py $1 $SLURM_ARRAY_TASK_ID
+
