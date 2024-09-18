@@ -7,7 +7,7 @@ import pandas as pd
 import rmgpy.chemkin
 # script to save the rankings for the mechanism
 
-sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/database/')
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database'))
 import database_fun
 import importlib
 

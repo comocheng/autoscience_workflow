@@ -10,7 +10,7 @@ try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
     print('using default DFT_DIR')
-    DFT_DIR = '/work/westgroup/harris.se/autoscience/reaction_calculator/dft'
+    DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
 species_df = pd.read_csv(os.path.join(DFT_DIR, 'species_database.csv'))
 total_species_list = [rmgpy.species.Species().from_adjacency_list(adj_list) for adj_list in species_df['adjacency_list'].values]

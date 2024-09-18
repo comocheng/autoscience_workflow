@@ -2,7 +2,7 @@ import re
 import os
 import sys
 import glob
-import thermokinetic_fun
+import autotst_wrapper
 
 
 try:
@@ -19,5 +19,5 @@ except ValueError:
     reaction_index = int(re.search('reaction_(.*?)/', logfile[0]).group(1))
 
 for logfile in logfiles:
-    if thermokinetic_fun.check_vib_irc(reaction_index, logfile):
+    if autotst_wrapper.check_vib_irc(reaction_index, logfile):
         print(f'{logfile} is valid')
