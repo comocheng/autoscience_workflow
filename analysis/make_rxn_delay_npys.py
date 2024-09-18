@@ -18,12 +18,6 @@ experimental_table_index = int(sys.argv[2])
 
 rxn_index_start = int(sys.argv[3])
 
-
-# # chemkin = '/home/moon/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
-# chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_model/chem_annotated.inp'
-# # chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/improved_model/cutoff3_20230418.inp'
-# chemkin = '/work/westgroup/harris.se/autoscience/reaction_calculator/delay_uncertainty/base_rmg_1week/chem_annotated.inp'
-
 working_dir = os.path.join(os.path.dirname(chemkin))
 
 
@@ -183,8 +177,7 @@ def run_simulation(T_orig, P_orig, X_orig):
 
 
 # Load the experimental conditions
-ignition_delay_data = '/work/westgroup/harris.se/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
-# ignition_delay_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
+ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'butane_ignition_delay.csv')
 df_exp = pd.read_csv(ignition_delay_data)
 table_exp = df_exp[df_exp['Table'] == experimental_table_index]
 # Define Initial conditions using experimental data

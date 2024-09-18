@@ -17,7 +17,7 @@ import rmgpy.data.kinetics
 import rmgpy.chemkin
 import cantera as ct
 
-sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/database/')
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database'))
 import database_fun
 
 
@@ -77,12 +77,7 @@ sp_uncertainty = rmg_sp_uncertainty
 total_uncertainty_array = np.concatenate((sp_uncertainty, rxn_uncertainty), axis=0)
 total_uncertainty_mat = np.repeat(np.transpose(np.matrix(total_uncertainty_array)), 12 * 51, axis=1)
 
-
-# ----------- make sure uncertainty of recalculated things is updated ----------
-# TODO test this on the next round
-# TODO I think this whole section is taking the wrong approach. uncertainty should be correct on import
-# check which reactions have been recalculated
-DFT_DIR = '/work/westgroup/harris.se/autoscience/reaction_calculator/dft'
+DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
 # only keep the ones that appeared in any top_50 yaml
 top_50_files = glob.glob('../butane_*/top_calculations.yaml')
@@ -178,8 +173,7 @@ phi_dicts = []
 for table_index in range(1, 13):
 
     # Load the experimental conditions
-    ignition_delay_data = '/work/westgroup/harris.se/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
-    # ignition_delay_data = '/home/moon/autoscience/autoscience/butane/experimental_data/butane_ignition_delay.csv'
+    ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'butane_ignition_delay.csv')
     df_exp = pd.read_csv(ignition_delay_data)
     table_exp = df_exp[df_exp['Table'] == table_index]
     # Define Initial conditions using experimental data

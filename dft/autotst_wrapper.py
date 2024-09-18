@@ -59,14 +59,14 @@ import arkane.exceptions
 import shutil
 
 
-sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/database/')
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database'))
 import database_fun
 
 
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    DFT_DIR = "/work/westgroup/harris.se/autoscience/reaction_calculator/dft"
+    DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
 MAX_JOBS_RUNNING = 50
 MAX_N_CONFORMERS = 100
@@ -1571,7 +1571,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     arkane_dir = os.path.join(reaction_dir, 'arkane')
     os.makedirs(arkane_dir, exist_ok=True)
 
-    species_dict_file = "/work/westgroup/harris.se/autoscience/autoscience/butane/models/rmg_model/species_dictionary.txt"
+    species_dict_file = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'RMG_example_fuel_YYYYMMDD', 'species_dictionary.txt')
     species_dict = rmgpy.chemkin.load_species_dictionary(species_dict_file)
 
     def get_sp_name(smiles):
