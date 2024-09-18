@@ -5,8 +5,7 @@ import glob
 import numpy as np
 
 
-#DFT_DIR = '/work/westgroup/harris.se/autoscience/reaction_calculator/dft'
-DFT_DIR = '/work/westgroup/harris.se/autoscience/autoscience/butane/dft'
+DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
 
 def get_runtime(log_file):

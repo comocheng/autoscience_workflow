@@ -1,7 +1,7 @@
 #!/bin/bash
 
 suffix=$(printf "%06.0f" $(($1)))
-reaction_dir="/work/westgroup/harris.se/autoscience/reaction_calculator/dft/kinetics/reaction_$suffix"
+reaction_dir="$AUTOSCIENCE_REPO/dft/kinetics/reaction_$suffix"
 
 if test -f "$reaction_dir/arkane/RMG_libraries/reactions.py" ; then
     echo "Arkane complete"
