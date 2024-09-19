@@ -37,7 +37,6 @@ transport = os.path.join(basedir, 'tran.dat')
 if not os.path.exists(cantera_file):
     subprocess.run(['ck2yaml', f'--input={input_chemkin}', f'--transport={transport}', f'--output={cantera_file}'])
 
-
 species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(base_chemkin, dictionary_path=dictionary, transport_path=transport, use_chemkin_names=True)
 
 gas = ct.Solution(cantera_file)
@@ -68,6 +67,7 @@ rmg_sp_uncertainty = np.load(sp_uncertainty_file)
 assert len(rmg_rxn_uncertainty) == len(reaction_list)
 assert len(rmg_sp_uncertainty) == len(species_list)
 
+# create big matrix of uncertainties based on Cantera order
 rxn_uncertainty = np.zeros(len(gas.reactions()))
 for ct_index in range(len(rxn_uncertainty)):
     rxn_uncertainty[ct_index] = rmg_rxn_uncertainty[ct2rmg_rxn[ct_index]]
@@ -81,65 +81,17 @@ sp_uncertainty = rmg_sp_uncertainty
 total_uncertainty_array = np.concatenate((sp_uncertainty, rxn_uncertainty), axis=0)
 total_uncertainty_mat = np.repeat(np.transpose(np.matrix(total_uncertainty_array)), 12 * 51, axis=1)
 
-DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
-
-# only keep the ones that appeared in any top_50 yaml
-top_50_files = glob.glob('../butane_*/top_calculations.yaml')
-
-include_list = []
-
-for top_50_file in top_50_files:
-    with open(top_50_file, 'r') as f:
-        top_calculations = yaml.safe_load(f)
-
-    for entry in top_calculations:
-        if entry['type'] == 'reaction':
-            include_list.append(entry['index'])
-print(list(set(include_list)))
-
-
-# first, get valid kinetics from old workflow
-kinetics_libs = glob.glob(os.path.join(DFT_DIR, 'kinetics', 'reaction*', 'arkane', 'RMG_libraries'))
-
-# Load the Arkane kinetics
-entries = []
-for i, lib_path in enumerate(kinetics_libs):
-
-    matches = re.search('reaction_([0-9]{4,6})', lib_path)
-    reaction_index = int(matches[1])
-    ark_kinetics_database = rmgpy.data.kinetics.KineticsDatabase()
-    ark_kinetics_database.load_libraries(lib_path)
-
-    # TODO fix bug related to load_libraries not getting the actual name
-    for key in ark_kinetics_database.libraries[''].entries.keys():
-        entry = ark_kinetics_database.libraries[''].entries[key]
-
-        # check isomorphism with include_list
-        idx = database_fun.get_unique_reaction_index(ark_kinetics_database.libraries[''].entries[key].item)
-        if idx not in include_list:
-            break
-
-        entry.index = reaction_index
-        entries.append(entry)
-        print(f'Adding\t{entry.index}\t{entry}')
-
-for i in range(len(entries)):
-    for j in range(len(reaction_list)):
-        if reaction_list[j].is_isomorphic(entries[i].item):
-            if rmg_rxn_uncertainty[j] != 0.5:
-                print(j, '\t', entries[i].item, '\t', entries[i].index, '\t', rmg_rxn_uncertainty[j])
-            break
-
+# create matrix of DFT errors
+# will later subtract this from actual error to see if DFT is expected to improve model
 SPECIES_DFT_ERROR = 3.0
 REACTION_DFT_ERROR = 1 / np.sqrt(3) * np.log(10)
-
 sp_dft_uncertainty_mat = np.ones((N, 12 * 51)) * SPECIES_DFT_ERROR
 rxn_dft_uncertainty_mat = np.ones((M, 12 * 51)) * REACTION_DFT_ERROR
 dft_uncertainty_mat = np.concatenate((sp_dft_uncertainty_mat, rxn_dft_uncertainty_mat), axis=0)
 
+# print out the top 10 uncertain reactions
 reaction_indices = np.arange(0, len(gas.reactions()))
 reaction_uncertainty_order = [x for _, x in sorted(zip(rxn_uncertainty, reaction_indices))][::-1]
-
 print('Top 10 Uncertain Reactions')
 print('i\tDelta\tReaction\tSensitivity\tImprovement Score')
 # TODO convert to db indices? instead of ct
@@ -205,12 +157,12 @@ for table_index in range(1, 13):
 
     phi_dicts.append(conc_dict)
 
+
 # There are 12 * K different simulation settings. We need each parameter estimate at each setting
 # Create a matrix with temperatures and one with pressures
 T = np.linspace(663, 1077, 51)
 table_temperatures = np.repeat(np.matrix(T), 12, axis=1)
 temperatures = np.repeat(table_temperatures, total_delays.shape[0], axis=0)
-
 pressures = np.zeros(temperatures.shape)
 for i in range(pressures.shape[1]):
     if int(i / 51) in [0, 3, 6, 9]:
@@ -243,7 +195,6 @@ for j in range(N):
 
     mod_gas.modify_species(j, gas.species()[j])
 
-# In theory, delta G should be 10% G_base, but apparently it isn't...
 # G has units Enthalpy [J/kg or J/kmol] it's J / kmol
 delta_G = G_perturbed - G_base
 delta_G_kcal_mol = delta_G / 4.184 / 1000.0 / 1000.0  # needs to be kcal/mol to match Gao paper
@@ -264,10 +215,8 @@ first_derivative = np.divide(d_ln_tau, delta)
 avg_first_derivative = np.nanmean(first_derivative, axis=1)
 abs_avg_first_derivative = np.abs(avg_first_derivative)
 abs_avg_first_derivative[np.isnan(abs_avg_first_derivative)] = -np.inf
-# avg_first_derivative[np.isnan(avg_first_derivative)] = -np.inf
 
 parameter_indices = np.arange(0, N + M)
-# reaction_sensitivity_order = [x for _, x in sorted(zip(avg_first_derivative, parameter_indices))][::-1]
 reaction_sensitivity_order = [x for _, x in sorted(zip(abs_avg_first_derivative, parameter_indices))][::-1]
 
 print('Top Sensitive Parameters')
@@ -328,82 +277,6 @@ for i in range(0, 50):
 
 print()
 print()
-
-# -------------------- Display Possible/Cumulative Improvement scores -------------
-# This only counts the reactions that AutoTST can handle
-total_possible = 0
-for i in range(len(avg_improvement_score)):
-    # get the family
-    if avg_improvement_score[i] > 0:
-        if i < N:
-            total_possible += avg_improvement_score[i, 0]
-            continue
-        family = 'PDEP'
-        try:
-            family = reaction_list[ct2rmg_rxn[i - N]].family
-        except AttributeError:
-            pass
-        if family in ['H_Abstraction', 'Disproportionation', 'intra_H_migration']:
-            total_possible += avg_improvement_score[i, 0]
-print(f'{total_possible} improvement possible out of {improvement_total}')
-
-print('Top Possible/Cumulative Improvement Scores')
-print('i\tDb Index\tIS\tImprovement %\tCumulative%\tReaction')
-new_top50 = set()
-cumulative = 0
-for i in range(0, 50):
-    ct_index = improvement_order[i]
-    if ct_index < N:
-        print(i, '\t', '?', '\t', np.round(avg_improvement_score[ct_index, 0], 9),
-              '\t', gas.species()[ct_index])
-    else:
-        family = 'PDEP'
-        try:
-            family = reaction_list[ct2rmg_rxn[ct_index - N]].family
-        except AttributeError:
-            pass
-
-        db_index = database_fun.get_unique_reaction_index(reaction_list[ct2rmg_rxn[ct_index - N]])
-        improvement_percent = np.round(avg_improvement_score[ct_index, 0] / improvement_total, 9)
-
-        if family in ['H_Abstraction', 'Disproportionation', 'intra_H_migration']:
-            cumulative += np.round(avg_improvement_score[ct_index, 0] / total_possible, 9)
-
-        print(i, '\t', db_index, '\t', np.round(avg_improvement_score[ct_index, 0], 9),
-              '\t', improvement_percent, '\t', cumulative, '\t', gas.reactions()[ct_index - N], family)
-
-# ------------------- Save the top_calculations yaml ---------------------
-# save the yaml file
-parameter_indices = np.arange(0, N + M)
-improvement_order = [x for _, x in sorted(zip(avg_improvement_score, parameter_indices))][::-1]
-
-top_calculations = []
-
-for i in range(0, 50):
-    entry = {}
-    ct_index = improvement_order[i]
-
-    if ct_index < N:
-        entry['name'] = str(species_list[ct_index])
-        entry['type'] = 'species'
-        entry['index'] = database_fun.get_unique_species_index(species_list[ct_index])
-    else:
-        rmg_index = ct2rmg_rxn[ct_index - N]
-        entry['name'] = str(reaction_list[rmg_index])
-        entry['type'] = 'reaction'
-        entry['index'] = database_fun.get_unique_reaction_index(reaction_list[rmg_index])
-        family = 'PDEP'
-        try:
-            family = reaction_list[rmg_index].family
-        except AttributeError:
-            pass
-        entry['family'] = family
-
-    top_calculations.append(entry)
-
-# save local copy
-with open(os.path.join(basedir, 'top_calculations.yaml'), 'w') as f:
-    yaml.dump(top_calculations, f)
 
 # ------------------- Save the top_calculations mech_summary_2024XXXX.csv ---------------------
 # Make a summary CSV
