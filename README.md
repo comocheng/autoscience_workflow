@@ -43,13 +43,17 @@ Run the [analysis/run_analysis.py](https://github.com/comocheng/autoscience_work
 - Ranks Parameters
   - Uses the sensitivity and uncertainty results with the uncertainty of the DFT method to create an Improvement score, a measure of how calculating the parameter is expected to improve the model
   - Negative improvement score means calculating the parameter and replacing the existing value will make the model worse
-  - Saves top 200 ordered parameters to mechanism_YYYYMMDD.csv
+  - Saves top 200 ordered parameters to a mech_summary.csv file
 
 ## 3. Calculate Parameters
-Run the run_autorunner.sh script. It does the following:
+Run the [dft/autorunner.py](https://github.com/comocheng/autoscience_workflow/blob/main/dft/autorunner.py) script by calling `sbatch dft/autorunner.sh path/to/mech_summary.csv` It does the following:
 - Uses AutoTST to make guesses about species or reaction transition-state geometries
 - Uses Gaussian 16 to run geometry optimizations and then energy and frequency calculations
 - Uses Arkane to compute thermodynamic and kinetic parameter values from Gaussian 16 logs and save in RMG library format
+
+You can also run calculations for an individual reaction with the [dft/run_whole_reaction.py](https://github.com/comocheng/autoscience_workflow/blob/main/dft/run_whole_reaction.py) script: `sbatch dft/run_whole_reaction.sh REACTION_INDEX` where REACTION_INDEX is the that reaction's index in the [reaction database](https://github.com/comocheng/autoscience_workflow/blob/main/database/reaction_database.csv)
+
+Or calculations for an individual species with the [dft/run_species.py](https://github.com/comocheng/autoscience_workflow/blob/main/dft/run_species.py) script: `sbatch dft/run_species.sh SPECIES_INDEX` where SPECIES_INDEX is the that species's index in the [species database](https://github.com/comocheng/autoscience_workflow/blob/main/database/species_database.csv)
 
 ## 4. Compile Calculations into Library for RMG
 - Run the compile_lib.ipynb Jupyter Notebook to generate the thermodynamics and kinetics library files.
