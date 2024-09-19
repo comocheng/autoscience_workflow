@@ -11,7 +11,7 @@ import datetime
 import subprocess
 import pandas as pd
 import job_manager
-sys.path.append('/work/westgroup/harris.se/autoscience/reaction_calculator/dft/')
+
 import autotst_wrapper
 
 
@@ -21,7 +21,7 @@ MAX_JOBS_RUNNING = 50
 try:
     DFT_DIR = os.environ['DFT_DIR']
 except KeyError:
-    DFT_DIR = '/work/westgroup/harris.se/autoscience/reaction_calculator/dft'
+    DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
 previous_attempts = []  # store what has already been tried so we can move on (and mark failed status) if things are failing
 
