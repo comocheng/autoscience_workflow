@@ -119,6 +119,10 @@ if not os.path.exists(os.path.join(working_dir, 'total_perturbed_mech_delays.npy
     job.submit(slurm_cmd)
     time.sleep(2.0)
     job.wait(check_interval=10.0)
+
+    # we need these two files to continue with the sensitivity analysis
+    assert os.path.exists(os.path.join(working_dir, 'total_perturbed_mech_delays.npy'))
+    assert os.path.exists(os.path.join(working_dir, 'total_base_delays.npy'))
     printlog(f'Done compiling sensitivity results')
 else:
     printlog('Sensitivity already compiled')

@@ -45,6 +45,7 @@ print(f'M={M}', 'reactions')
 
 all_delays_ever = np.zeros((N + M, 12 * K))
 
+table_dir = os.path.join(mech_dir, f'table_0007')
 sp7_file = os.path.join(table_dir, f'species_delays_{7:04}.npy')
 if not os.path.exists(sp7_file):
     sp_files = glob.glob(os.path.join(mech_dir, 'table_0007', 'spec_delay_0007_*.npy'))
@@ -64,8 +65,10 @@ for table_index in range(1, 13):
     sp_file = os.path.join(table_dir, f'species_delays_{table_index:04}.npy')
     if table_index == 7 and not os.path.exists(sp_file):
         print(f'missing species delay file 7: {sp_file}')
-        continue
+        # continue
         raise OSError(f'missing species delay file {sp_file}')
+    elif not os.path.exists(sp_file):
+        continue  # not going to calculate other tables right now
 
     all_delays_ever[0:N, (table_index - 1) * K: table_index * K] = np.load(sp_file)
 
@@ -91,8 +94,7 @@ for table_index in range(1, 13):
     base_delay_file = os.path.join(table_dir, f'base_delays_{table_index:04}.npy')
     if not os.path.exists(base_delay_file):
         print(f'Missing base delay file {base_delay_file}')
-        continue
-        raise OSError(f'Missing base delay file {base_delay_file}')
+        continue  # okay as long as it's not Table 7
 
     total_base_delays[(table_index - 1) * K:table_index * K] = np.load(base_delay_file)
 # save the resulting base delay array
