@@ -56,22 +56,21 @@ You can also run calculations for an individual reaction with the [dft/run_whole
 Or calculations for an individual species with the [dft/run_species.py](https://github.com/comocheng/autoscience_workflow/blob/main/dft/run_species.py) script: `sbatch dft/run_species.sh SPECIES_INDEX` where SPECIES_INDEX is the that species's index in the [species database](https://github.com/comocheng/autoscience_workflow/blob/main/database/species_database.csv)
 
 ## 4. Compile Calculations into Library for RMG
-- Run the compile_lib.ipynb Jupyter Notebook to generate the thermodynamics and kinetics library files.
-- This copies them into the RMG-database for use during the next phase of model generation
+- Run the [compile_lib.ipynb](https://github.com/comocheng/autoscience_workflow/blob/main/RMG_example_fuel_YYYYMMDD/compile_lib.ipynb) Jupyter Notebook to generate the thermodynamics and kinetics library files.
+- This copies species thermodynamics and reaction kinetics calculations into RMG-usable format, which must then be copied to wherever you have installed RMG-database for the next RMG run
 
 ## 5. Repeat Model Generation
 Return to step 1, but be sure to include the latest libraries in the input.py file
 
-To check if the model has converged (ignition delays are within 10% of previous values at all temperatures), run the plotting/check_converged.ipynb Notebook
+To check if the model has converged (ignition delays are within 10% of previous values at all temperatures), run the [plotting/check_converged.ipynb](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/check_converged.ipynb) Notebook
 
 ## 6. Compare to Experiments
-See plotting plotting/check_mech.ipynb and plotting/plot_subset_delays.ipynb Notebooks for examples of plotting ignition delays.
+See plotting [plotting/check_mech.ipynb](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/check_mech.ipynb) and [plotting/plot_subset_delays.ipynb](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/plot_subset_delays.ipynb) Notebooks for examples of plotting ignition delays.
 
 Some other plots of interest:
-- local uncertainty
-- global uncertainty (have to run the Monte Carlo sampling script)
-- species flux comparison diagram
-- individual species thermodynamics
-- individual reaction kinetics
-- comparison of top sensitivities
+- [local uncertainty](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/plot_local_uncertainty.ipynb)
+- [global uncertainty](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/plot_global_uncertainty.ipynb) (have to run the Monte Carlo sampling [script](https://github.com/comocheng/autoscience_workflow/blob/main/monte_carlo_sampling/run_all_sims.py))
+- [species flux comparison diagram](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/plot_flux_diagram.ipynb)
+- [individual species thermodynamics or reaction kinetics](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/plot_thermokinetics.ipynb)
+- [comparison of top sensitivities](https://github.com/comocheng/autoscience_workflow/blob/main/plotting/plot_top_sensitivities.ipynb)
 
