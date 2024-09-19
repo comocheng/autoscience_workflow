@@ -5,7 +5,7 @@ import os
 reaction_index = int(sys.argv[1])
 
 
-df = pd.read_csv(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft', 'reaction_database.csv'))
+df = pd.read_csv(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database', 'reaction_database.csv'))
 
 
 unique_string = df.loc[df['i'] == reaction_index]['unique_string'].values[0]

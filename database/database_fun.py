@@ -6,13 +6,9 @@ import pandas as pd
 import rmgpy.reaction
 
 
-try:
-    DFT_DIR = os.environ['DFT_DIR']
-except KeyError:
-    print('using default DFT_DIR')
-    DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
+DATABASE_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database')
 
-species_df = pd.read_csv(os.path.join(DFT_DIR, 'species_database.csv'))
+species_df = pd.read_csv(os.path.join(DATABASE_DIR, 'species_database.csv'))
 total_species_list = [rmgpy.species.Species().from_adjacency_list(adj_list) for adj_list in species_df['adjacency_list'].values]
 
 
@@ -33,7 +29,7 @@ def get_unique_species_index(species):
 
 
 def get_unique_reaction_index(reaction):
-    reaction_df = pd.read_csv(os.path.join(DFT_DIR, 'reaction_database.csv'))
+    reaction_df = pd.read_csv(os.path.join(DATABASE_DIR, 'reaction_database.csv'))
     unique_string = get_unique_string(reaction)
     for j in range(len(reaction_df)):
         if unique_string == reaction_df['unique_string'].values[j]:
@@ -97,12 +93,12 @@ def reaction2smiles(reaction):
 
 
 def reaction_index2smiles(reaction_index):
-    reaction_df = pd.read_csv(os.path.join(DFT_DIR, 'reaction_database.csv'))
+    reaction_df = pd.read_csv(os.path.join(DATABASE_DIR, 'reaction_database.csv'))
     return reaction_df[reaction_df['i'] == reaction_index]['SMILES'].values[0]
 
 
 def index2reaction(reaction_index):
-    reaction_df = pd.read_csv(os.path.join(DFT_DIR, 'reaction_database.csv'))
+    reaction_df = pd.read_csv(os.path.join(DATABASE_DIR, 'reaction_database.csv'))
     unique_string = reaction_df[reaction_df['i'] == reaction_index]['unique_string'].values[0]
 
     reactants_string = unique_string.split('=')[0]
@@ -128,7 +124,7 @@ def add_species_to_database(species_list):
     species_to_add = []
 
     # reload the species database just in case we're working with a stale version
-    species_csv = os.path.join(DFT_DIR, 'species_database.csv')
+    species_csv = os.path.join(DATABASE_DIR, 'species_database.csv')
     species_df = pd.read_csv(species_csv)
     print(f'Loaded species database contains {len(species_df)} unique species')
     for i, new_sp in enumerate(species_list):
@@ -174,12 +170,8 @@ def add_species_to_database(species_list):
 
 
 def add_reaction_to_database(reaction_list):
-    # reload reaction_df and species_df fresh:
-    # species_df = pd.read_csv(os.path.join(DFT_DIR, 'species_database.csv'))
-    # total_species_list = [rmgpy.species.Species().from_adjacency_list(adj_list) for adj_list in species_df['adjacency_list'].values]
-    # print(f'Reloaded species database contains {len(species_df)} unique species')
 
-    reaction_csv = os.path.join(DFT_DIR, 'reaction_database.csv')
+    reaction_csv = os.path.join(DATABASE_DIR, 'reaction_database.csv')
     reaction_df = pd.read_csv(reaction_csv)
     print(f'Loaded reaction database contains {len(reaction_df)} unique reactions')
 
@@ -233,7 +225,7 @@ def find_reverses(reaction_index_list):
 
     reverses = {}
     # load the reaction database
-    reaction_csv = os.path.join(DFT_DIR, 'reaction_database.csv')
+    reaction_csv = os.path.join(DATABASE_DIR, 'reaction_database.csv')
     reaction_df = pd.read_csv(reaction_csv)
 
     for my_index in reaction_index_list:
