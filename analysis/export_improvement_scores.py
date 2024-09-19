@@ -44,12 +44,10 @@ gas = ct.Solution(cantera_file)
 perturbed_cti_path = os.path.join(basedir, 'perturbed.yaml')
 perturbed_gas = ct.Solution(perturbed_cti_path)
 
-# This cti -> rmg converter dictionary can be made using rmg_tools/ct2rmg_dict.py
-# rmg_tools can be found here: https://github.com/sevyharris/rmg_tools/tree/main
-RMG_TOOLS_DIR = '/home/harris.se/rmg/rmg_tools'
+# make a dictionary for mapping from cantera reactions back to RMG reactions
 if not os.path.exists(os.path.join(basedir, 'ct2rmg_rxn.pickle')):
     print('Creating ct2rmg pickle')
-    subprocess.run(['python', os.path.join(RMG_TOOLS_DIR, 'ct2rmg_dict.py'), base_chemkin])
+    subprocess.run(['python', os.path.join(os.environ['AUTOSCIENCE_REPO'], 'analysis', 'ct2rmg_dict.py'), base_chemkin])
 
 with open(os.path.join(basedir, 'ct2rmg_rxn.pickle'), 'rb') as handle:
     ct2rmg_rxn = pickle.load(handle)
