@@ -5,10 +5,23 @@ import os
 import pandas as pd
 import rmgpy.reaction
 
+try:
+    DATABASE_DIR = os.environ['DATABASE_DIR']
+except KeyError:
+    DATABASE_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database')
+print(f'Loading DFT database from {DATABASE_DIR}')
 
-DATABASE_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'database')
+try:
+    species_df = pd.read_csv(os.path.join(DATABASE_DIR, 'species_database.csv'))
+except FileNotFoundError:
+    print(f'No species database found in directory {DATABASE_DIR}. Creating empty one')
+    species_csv = os.path.join(DATABASE_DIR, 'species_database.csv')
+    if not os.path.exists(species_csv):
+        species_df = pd.DataFrame(columns=['i', 'name', 'SMILES', 'adjacency_list'])
+        with open(species_csv, "w", newline="") as f:
+            species_df.to_csv(species_csv, index=False)
+            f.flush()
 
-species_df = pd.read_csv(os.path.join(DATABASE_DIR, 'species_database.csv'))
 total_species_list = [rmgpy.species.Species().from_adjacency_list(adj_list) for adj_list in species_df['adjacency_list'].values]
 
 
@@ -21,7 +34,7 @@ def get_unique_species_index(species):
             if species.is_isomorphic(total_species_list[j].molecule[0]):
                 return int(species_df['i'].values[j])
         raise IndexError(f'Species {str(species)} not in database')
-    else:    
+    else:
         for j in range(len(total_species_list)):
             if species.is_isomorphic(total_species_list[j]):
                 return int(species_df['i'].values[j])
@@ -172,7 +185,11 @@ def add_species_to_database(species_list):
 def add_reaction_to_database(reaction_list):
 
     reaction_csv = os.path.join(DATABASE_DIR, 'reaction_database.csv')
+    if not os.path.exists(reaction_csv):
+        reaction_df = pd.Dataframe(columns=['i', 'name', 'SMILES', 'unique_string'])
+        reaction_df.to_csv(reaction_csv, index=False)
     reaction_df = pd.read_csv(reaction_csv)
+
     print(f'Loaded reaction database contains {len(reaction_df)} unique reactions')
 
     print('Looking for new reactions in mechanism...')
@@ -231,7 +248,7 @@ def find_reverses(reaction_index_list):
     for my_index in reaction_index_list:
         unique_string = reaction_df[reaction_df['i'] == my_index]['unique_string'].values[0]
         reverse_unique_string = unique_string.split('=')[-1] + '=' + unique_string.split('=')[0]
-        
+
         reverse_indices = reaction_df[reaction_df['unique_string'] == reverse_unique_string]['i'].values
         if reverse_indices.size > 0:
             reverses[my_index] = int(reverse_indices[0])
@@ -240,4 +257,3 @@ def find_reverses(reaction_index_list):
             reverses[my_index] = None
 
     return reverses
-
