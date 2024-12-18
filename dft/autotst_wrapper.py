@@ -10,7 +10,9 @@ import datetime
 import yaml
 import job_manager
 
+import arkane
 import arkane.ess.gaussian  # does a lot better at reading gaussian files than ase
+import arkane.ess.orca
 
 import cclib.io
 
@@ -71,6 +73,14 @@ except KeyError:
 MAX_JOBS_RUNNING = 50
 MAX_N_CONFORMERS = 100
 MAX_JOBS_PER_TASK = 30
+
+
+def get_xyz(atoms, fmt='%22.15f'):  # taken from ase.io.xyz's write_xyz function
+    # returns the positions of the ase.atoms.Atoms object in xyz format as a string
+    xyz_str = ""
+    for s, (x, y, z) in zip(atoms.symbols, atoms.positions):
+        xyz_str += ('%-2s %s %s %s\n' % (s, fmt % x, fmt % y, fmt % z))
+    return xyz_str
 
 
 def get_termination_status(log_file):
@@ -419,6 +429,142 @@ def optimize_conformers(species_index):
         jobs_running = job_manager.count_slurm_jobs()
 
     gaussian_conformers_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
+def setup_species_single_point(species_index, force_rerun=False):
+    """Run DPLNO CCSD(T) on optimized species conformer"""
+    # if force_rerun is True, will rerun the calculation even if it's finished
+    # if arkane_species_complete(species_index):
+    #     return True
+
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    conformer_dir = os.path.join(species_dir, 'conformers')
+    single_point_dir = os.path.join(species_dir, 'single_point')
+    os.makedirs(single_point_dir, exist_ok=True)
+    orca_output_file = os.path.join(single_point_dir, 'conformer.out')
+    if not force_rerun:
+        try:
+            orca_logfile = arkane.ess.orca.OrcaLog(orca_output_file)
+            return True
+        except arkane.exceptions.LogError:
+            species_log(species_index, f'Faulty or missing orca output file. Rerunning single-point calc.')
+
+    species_log(species_index, f'Setting up single point calculation job')
+
+    # Get lowest energy conformer file
+    conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
+
+    # grab the xyz coordinates from the conformer file and save to xyz file
+    gaussian_logfile = arkane.ess.gaussian.GaussianLog(conformer_file)
+    coord, number, mass = gaussian_logfile.load_geometry()
+
+    atoms = ase.Atoms(positions=coord, symbols=number)
+    # xyz_file = os.path.join(single_point_dir, 'conformer.xyz')
+    # atoms.write(xyz_file)
+
+    # write the orca input file
+    rmg_species = database_fun.index2species(species_index)
+    orca_input_file = os.path.join(single_point_dir, 'conformer.inp')
+
+    input_format = """!{res}HF {level_of_theory} TightSCF tightPNO
+!energy
+
+%maxcore 10240
+%pal nprocs {nprocs} end
+
+* xyz {charge} {mult}
+{xyz}*
+
+
+"""
+
+    input_content = input_format.format(
+        res='r' if rmg_species.multiplicity == 1 else 'u',
+        level_of_theory='dlpno-ccsd(t)-f12 cc-pvtz-f12 aug-cc-pvtz/c cc-pvtz-f12-cabs',
+        nprocs=16,
+        charge=rmg_species.get_net_charge(),
+        mult=rmg_species.multiplicity,
+        xyz=get_xyz(atoms),
+    )
+
+    with open(orca_input_file, 'w') as f:
+        f.write(input_content)
+        # f.writelines([
+        #     '! dlpno-ccsd(t)-f12 cc-pVTZ-F12 cc-pVTZ-F12-CABS CC-PVTZ/C\n',
+        #     '%maxcore 10000\n'
+        #     '%pad nprocs 16 end\n\n'
+
+        #     f'*xyzfile {rmg_species.get_net_charge()} {rmg_species.multiplicity} conformer.xyz' + '\n'
+        # ])
+
+    # write the slurm script
+    run_orca_script = os.path.join(single_point_dir, 'run.sh')
+    with open(run_orca_script, 'w') as f:
+        f.write("""#!/bin/bash
+#SBATCH --job-name=""" + f'orca_sp_{species_index:04}' + """
+#SBATCH --error=error.log
+#SBATCH --nodes=1
+#SBATCH --partition=west,short
+#SBATCH --exclude=c5003
+#SBATCH --mem=200Gb
+#SBATCH --time=48:00:00
+#SBATCH --ntasks=16
+
+
+ompi=/work/westgroup/orca/openmpi-4.1.6/build
+PATH=$ompi/bin:$PATH
+LD_LIBRARY_PATH=$ompi/lib:$ompi/etc:$LD_LIBRARY_PATH
+
+#Orca
+orcadir=/work/westgroup/orca/orca_6_0_1_linux_x86-64_shared_openmpi416
+export PATH=$PATH:$orcadir
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$orcadir
+
+
+""" + f"cd {single_point_dir}" + """
+
+# delete previous attempts
+""" + f"rm {single_point_dir}/*.tmp" + """
+""" + f"rm {single_point_dir}/*.gbw" + """
+""" + f"rm {single_point_dir}/*.gbw" + """
+""" + f"rm {single_point_dir}/*.prop" + """
+""" + f"rm {single_point_dir}/*bas*" + """
+""" + f"rm {single_point_dir}/*.0" + """
+""" + f"rm {single_point_dir}/*.densities*" + """
+
+$orcadir/orca conformer.inp > conformer.out
+
+    """)
+
+
+def run_species_single_point(species_index, force_rerun=False):
+    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
+    single_point_dir = os.path.join(species_dir, 'single_point')
+    orca_output_file = os.path.join(single_point_dir, 'conformer.out')
+    run_orca_script = os.path.join(single_point_dir, 'run.sh')
+    if not force_rerun:
+        try:
+            orca_logfile = arkane.ess.orca.OrcaLog(orca_output_file)
+            return True
+        except arkane.exceptions.LogError:
+            species_log(species_index, f'Faulty or missing orca output file. Rerunning single-point calc.')
+
+    species_log(species_index, f'Running single point calculation job')
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(single_point_dir)
+    orca_sp_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {run_orca_script}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    orca_sp_job.submit(slurm_cmd)
     os.chdir(start_dir)
 
 
