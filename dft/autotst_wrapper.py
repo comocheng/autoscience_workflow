@@ -434,21 +434,20 @@ def optimize_conformers(species_index):
 
 def setup_species_single_point(species_index, force_rerun=False):
     """Run DPLNO CCSD(T) on optimized species conformer"""
-    # if force_rerun is True, will rerun the calculation even if it's finished
-    # if arkane_species_complete(species_index):
-    #     return True
 
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
     single_point_dir = os.path.join(species_dir, 'single_point')
     os.makedirs(single_point_dir, exist_ok=True)
     orca_output_file = os.path.join(single_point_dir, 'conformer.out')
-    if not force_rerun:
+    if force_rerun:
+        species_log(species_index, 'Forcing rerun of species single-point calc setup')
+    else:
         try:
             orca_logfile = arkane.ess.orca.OrcaLog(orca_output_file)
             return True
         except arkane.exceptions.LogError:
-            species_log(species_index, f'Faulty or missing orca output file. Rerunning single-point calc.')
+            pass
 
     species_log(species_index, f'Setting up single point calculation job')
 
@@ -458,10 +457,7 @@ def setup_species_single_point(species_index, force_rerun=False):
     # grab the xyz coordinates from the conformer file and save to xyz file
     gaussian_logfile = arkane.ess.gaussian.GaussianLog(conformer_file)
     coord, number, mass = gaussian_logfile.load_geometry()
-
     atoms = ase.Atoms(positions=coord, symbols=number)
-    # xyz_file = os.path.join(single_point_dir, 'conformer.xyz')
-    # atoms.write(xyz_file)
 
     # write the orca input file
     rmg_species = database_fun.index2species(species_index)
@@ -490,13 +486,6 @@ def setup_species_single_point(species_index, force_rerun=False):
 
     with open(orca_input_file, 'w') as f:
         f.write(input_content)
-        # f.writelines([
-        #     '! dlpno-ccsd(t)-f12 cc-pVTZ-F12 cc-pVTZ-F12-CABS CC-PVTZ/C\n',
-        #     '%maxcore 10000\n'
-        #     '%pad nprocs 16 end\n\n'
-
-        #     f'*xyzfile {rmg_species.get_net_charge()} {rmg_species.multiplicity} conformer.xyz' + '\n'
-        # ])
 
     # write the slurm script
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
@@ -543,12 +532,14 @@ def run_species_single_point(species_index, force_rerun=False):
     single_point_dir = os.path.join(species_dir, 'single_point')
     orca_output_file = os.path.join(single_point_dir, 'conformer.out')
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
-    if not force_rerun:
+    if force_rerun:
+        species_log(species_index, 'Forcing rerun of species single point calculation')
+    else:
         try:
             orca_logfile = arkane.ess.orca.OrcaLog(orca_output_file)
             return True
         except arkane.exceptions.LogError:
-            species_log(species_index, f'Faulty or missing orca output file. Rerunning single-point calc.')
+            pass
 
     species_log(species_index, f'Running single point calculation job')
 
@@ -1198,11 +1189,12 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
               '# -*- coding: utf-8 -*-', ]
 
     output += ["", f"spinMultiplicity = {conformer.rmg_molecule.multiplicity}", ""]
-    model_chemistry = 'M06-2X/cc-pVTZ'
+    energy_model_chemistry = 'dlpnoccsd(t)f122023/ccpvtzf12'
 
     # use relative path for easy transfer -- assume we will copy the log files into the Arkane folder
     gauss_log_relative = os.path.basename(gauss_log)
-    output += ["energy = {", f"    '{model_chemistry}': Log('{gauss_log_relative}'),", "}", ""]  # fix this
+    orca_log_relative = 'conformer.out'
+    output += ["energy = {", f"    '{energy_model_chemistry}': Log('{orca_log_relative}'),", "}", ""]  # fix this
 
     output += [f"geometry = Log('{gauss_log_relative}')", ""]
     output += [
@@ -1231,7 +1223,7 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
     return True
 
 
-def setup_arkane_species(species_index, include_rotors=True):
+def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
     """Function to set up the Arkane species directory for a given species
     default is to not do rotors. But if rotors are specified, the arkane directory
     will be arkane_rotors
@@ -1241,13 +1233,17 @@ def setup_arkane_species(species_index, include_rotors=True):
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
     rotor_dir = os.path.join(species_dir, 'rotors')
+    single_point_dir = os.path.join(species_dir, 'single_point')
     arkane_dir = os.path.join(species_dir, 'arkane')
     os.makedirs(arkane_dir, exist_ok=True)
 
-    species_log(species_index, f'Setting up Arkane species with rotors={include_rotors}')
-    if arkane_species_complete(species_index):
+    if force_rerun:
+        species_log(species_index, 'Forcing rerun of Arkane species setup')
+    elif arkane_species_complete(species_index):
         species_log(species_index, f'Arkane species already complete')
         return True
+
+    species_log(species_index, f'Setting up Arkane species with rotors={include_rotors}')
 
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
@@ -1272,6 +1268,9 @@ def setup_arkane_species(species_index, include_rotors=True):
         conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
 
     shutil.copy(conformer_file, arkane_dir)
+    orca_logfile = os.path.join(single_point_dir, 'conformer.out')
+    shutil.copy(orca_logfile, arkane_dir)
+
     with open(conformer_file, 'r') as f:
         atoms = ase.io.gaussian.read_gaussian_out(f)
 
@@ -1289,9 +1288,9 @@ def setup_arkane_species(species_index, include_rotors=True):
     formula = new_cf.rmg_molecule.get_formula()
     lines = [
         '#!/usr/bin/env python\n\n',
-        f'modelChemistry = "M06-2X/cc-pVTZ"\n',
+        f'modelChemistry = "dlpnoccsd(t)f122023/ccpvtzf12//M06-2X/cc-pVTZ"\n',
         f'useHinderedRotors = {include_rotors}' + '\n',
-        'useBondCorrections = False\n\n',
+        'useBondCorrections = True\n\n',
 
         'frequencyScaleFactor = 0.982\n',
 
@@ -1312,19 +1311,21 @@ def setup_arkane_species(species_index, include_rotors=True):
         f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
 
 
-def run_arkane_species(species_index):
+def run_arkane_species(species_index, force_rerun=False):
     # Run the arkane job
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     arkane_dir = os.path.join(species_dir, 'arkane')
 
-    if arkane_species_complete(species_index):
-        species_log(species_index, f'arkane already ran for species {species_index}')
+    if force_rerun:
+        species_log(species_index, 'Forcing rerun of arkane species')
+    elif arkane_species_complete(species_index):
+        species_log(species_index, f'Arkane already ran for species {species_index}')
         return True
 
     # Run the arkane job
     arkane_run_file = os.path.join(arkane_dir, 'run_arkane.sh')
     if not os.path.exists(arkane_run_file):
-        species_log(species_index, f'arkane run not set up for species {species_index}')
+        species_log(species_index, f'Arkane run not set up for species {species_index}')
         return False
 
     # wait for fewer than MAX_JOBS_RUNNING jobs running
