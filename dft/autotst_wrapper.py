@@ -432,24 +432,39 @@ def optimize_conformers(species_index):
     os.chdir(start_dir)
 
 
-def setup_species_single_point(species_index, force_rerun=False):
-    """Run DPLNO CCSD(T) on optimized species conformer"""
+def setup_single_point(index, calc_type='species', force_rerun=False):
+    # Run DPLNO CCSD(T) on optimized species conformer or ts_conformer
 
-    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
-    conformer_dir = os.path.join(species_dir, 'conformers')
-    single_point_dir = os.path.join(species_dir, 'single_point')
+    assert calc_type in ['species', 'reaction']
+
+    # set up directories
+    if calc_type == 'species':
+        base_dir = os.path.join(DFT_DIR, 'thermo', f'species_{index:04}')
+        conformer_dir = os.path.join(base_dir, 'conformers')
+    elif calc_type == 'reaction':
+        base_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{index:06}')
+        conformer_dir = os.path.join(base_dir, 'conformers')
+    else:
+        raise ValueError
+
+    single_point_dir = os.path.join(base_dir, 'single_point')
     os.makedirs(single_point_dir, exist_ok=True)
     orca_output_file = os.path.join(single_point_dir, 'conformer.out')
     if force_rerun:
-        species_log(species_index, 'Forcing rerun of species single-point calc setup')
+        if calc_type == 'species':
+            species_log(index, 'Forcing rerun of species single-point calc setup')
+        elif calc_type == 'reaction':
+            reaction_log(index, 'Forcing rerun of reaction TS single-point calc setup')
     else:
         try:
             orca_logfile = arkane.ess.orca.OrcaLog(orca_output_file)
             return True
         except arkane.exceptions.LogError:
             pass
-
-    species_log(species_index, f'Setting up single point calculation job')
+    if calc_type == 'species':
+        species_log(index, 'Setting up single point calculation job')
+    elif calc_type == 'reaction':
+        reaction_log(index, 'Setting up single point calculation job')
 
     # Get lowest energy conformer file
     conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
@@ -460,9 +475,17 @@ def setup_species_single_point(species_index, force_rerun=False):
     atoms = ase.Atoms(positions=coord, symbols=number)
 
     # write the orca input file
-    rmg_species = database_fun.index2species(species_index)
+    if calc_type == 'species':
+        rmg_species = database_fun.index2species(index)
+    elif calc_type == 'reaction':
+        rmg_reaction = database_fun.index2reaction(index)
+        reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+        reaction.get_labeled_reaction()
+        reaction.get_label()
+        direction = 'forward'
+        reaction.ts[direction][0].get_molecules()
+        rmg_species = reaction.ts[direction][0].rmg_molecule
     orca_input_file = os.path.join(single_point_dir, 'conformer.inp')
-
     input_format = """!{res}HF {level_of_theory} TightSCF tightPNO
 !energy
 
@@ -491,7 +514,7 @@ def setup_species_single_point(species_index, force_rerun=False):
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
     with open(run_orca_script, 'w') as f:
         f.write("""#!/bin/bash
-#SBATCH --job-name=""" + f'orca_sp_{species_index:04}' + """
+#SBATCH --job-name=""" + f'orca_{calc_type}_{index:06}' + """
 #SBATCH --error=error.log
 #SBATCH --nodes=1
 #SBATCH --partition=west,short
@@ -527,13 +550,20 @@ $orcadir/orca conformer.inp > conformer.out
     """)
 
 
-def run_species_single_point(species_index, force_rerun=False):
-    species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
-    single_point_dir = os.path.join(species_dir, 'single_point')
+def run_single_point(index, calc_type='species', force_rerun=False):
+    assert calc_type in ['species', 'reaction']
+    if calc_type == 'species':
+        base_dir = os.path.join(DFT_DIR, 'thermo', f'species_{index:04}')
+    elif calc_type == 'reaction':
+        base_dir = os.path.join(DFT_DIR, 'kinetics', f'species_{index:06}')
+    single_point_dir = os.path.join(base_dir, 'single_point')
     orca_output_file = os.path.join(single_point_dir, 'conformer.out')
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
     if force_rerun:
-        species_log(species_index, 'Forcing rerun of species single point calculation')
+        if calc_type == 'species':
+            species_log(index, 'Forcing rerun of species single point calculation')
+        elif calc_type == 'reaction':
+            reaction_log(index, 'Forcing rerun of reaction single point calculation')
     else:
         try:
             orca_logfile = arkane.ess.orca.OrcaLog(orca_output_file)
@@ -541,7 +571,10 @@ def run_species_single_point(species_index, force_rerun=False):
         except arkane.exceptions.LogError:
             pass
 
-    species_log(species_index, f'Running single point calculation job')
+    if calc_type == 'species':
+        species_log(index, f'Running single point calculation job')
+    elif calc_type == 'reaction':
+        reaction_log(index, 'Running single point calculation job')
 
     # submit the job
     start_dir = os.getcwd()
@@ -1648,6 +1681,14 @@ def run_opt(reaction_index, opt_type, direction='forward'):
     reaction_log(reaction_index, f'Running SLURM job: {slurm_cmd}')
     gaussian_opt_job.submit(slurm_cmd)
     os.chdir(start_dir)
+
+
+def setup_ts_rotors(reaction_index, direction='forward'):
+    raise NotImplementedError
+
+
+def run_single_point_ts(reaction_index, direction='forward'):
+    raise NotImplementedError
 
 
 def check_vib_irc(reaction_index, gaussian_logfile):
