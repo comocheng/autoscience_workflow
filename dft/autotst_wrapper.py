@@ -432,7 +432,7 @@ def optimize_conformers(species_index):
     os.chdir(start_dir)
 
 
-def setup_single_point(index, calc_type='species', force_rerun=False):
+def setup_single_point(index, calc_type='species', force_rerun=False, parallel=True):
     # Run DPLNO CCSD(T) on optimized species conformer or ts_conformer
 
     assert calc_type in ['species', 'reaction']
@@ -443,7 +443,7 @@ def setup_single_point(index, calc_type='species', force_rerun=False):
         conformer_dir = os.path.join(base_dir, 'conformers')
     elif calc_type == 'reaction':
         base_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{index:06}')
-        conformer_dir = os.path.join(base_dir, 'conformers')
+        conformer_dir = os.path.join(base_dir, 'overall')
     else:
         raise ValueError
 
@@ -490,7 +490,7 @@ def setup_single_point(index, calc_type='species', force_rerun=False):
 !energy
 
 %maxcore 10240
-%pal nprocs {nprocs} end
+{opt_parallel_line}
 
 * xyz {charge} {mult}
 {xyz}*
@@ -501,7 +501,7 @@ def setup_single_point(index, calc_type='species', force_rerun=False):
     input_content = input_format.format(
         res='r' if rmg_species.multiplicity == 1 else 'u',
         level_of_theory='dlpno-ccsd(t)-f12 cc-pvtz-f12 aug-cc-pvtz/c cc-pvtz-f12-cabs',
-        nprocs=16,
+        opt_parallel_line='%pal nprocs 16 end' if parallel else '',
         charge=rmg_species.get_net_charge(),
         mult=rmg_species.multiplicity,
         xyz=get_xyz(atoms),
@@ -513,6 +513,7 @@ def setup_single_point(index, calc_type='species', force_rerun=False):
     # write the slurm script
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
     with open(run_orca_script, 'w') as f:
+        # TODO format the text without """ so it doesn't mess with VSCode's collapse function button
         f.write("""#!/bin/bash
 #SBATCH --job-name=""" + f'orca_{calc_type}_{index:06}' + """
 #SBATCH --error=error.log
@@ -555,7 +556,7 @@ def run_single_point(index, calc_type='species', force_rerun=False):
     if calc_type == 'species':
         base_dir = os.path.join(DFT_DIR, 'thermo', f'species_{index:04}')
     elif calc_type == 'reaction':
-        base_dir = os.path.join(DFT_DIR, 'kinetics', f'species_{index:06}')
+        base_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{index:06}')
     single_point_dir = os.path.join(base_dir, 'single_point')
     orca_output_file = os.path.join(single_point_dir, 'conformer.out')
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
@@ -879,7 +880,7 @@ def run_rotors(species_index, increment_deg=20):
     os.chdir(start_dir)
 
 
-def setup_ts_rotors(reaction_index, increment_deg=30):
+def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False):
     """Set up rotor scans for a TS complex
     """
     # TODO check complete
@@ -896,9 +897,12 @@ def setup_ts_rotors(reaction_index, increment_deg=30):
 
     # check if the rotors were already set up
     rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
-    if rotor_logfiles:
-        reaction_log(reaction_index, 'TS rotors already set up')
-        return True
+    if force_rerun:
+        reaction_log(reaction_index, 'forcing rerun of ts rotors')
+    else:
+        if rotor_logfiles:
+            reaction_log(reaction_index, 'TS rotors already set up')
+            return True
     reaction_log(reaction_index, f'Starting TS rotor setup')
 
     # # ------------------ Use Hotbit to screen the conformers ------------------
@@ -934,7 +938,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30):
     return True
 
 
-def run_ts_rotors(reaction_index, increment_deg=30):
+def run_ts_rotors(reaction_index, increment_deg=30, force_rerun=False):
     """Run the rotor scans that were set up"""
     # TODO check for completion
 
@@ -951,8 +955,11 @@ def run_ts_rotors(reaction_index, increment_deg=30):
     suffix = ''
 
     # check if the rotors were already completed (might setup rerun even if already ran once)
-    if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name=f'{rotor_str}_'):
-        return True  # already ran
+    if force_rerun:
+        reaction_log(reaction_index, 'forcing rerun rotor ts calcs job')
+    else:
+        if conformers_done_optimizing(rotor_dir, completion_threshold=1.0, base_name=f'{rotor_str}_'):
+            return True  # already ran
 
     reaction_log(reaction_index, f'Counting incomplete rotor scans (ran out of time)...')
     rerun_indices = []
@@ -995,7 +1002,10 @@ def run_ts_rotors(reaction_index, increment_deg=30):
         slurm_settings['--constraint'] = 'cascadelake'
         slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
         slurm_settings['--cpus-per-task'] = 32
-        slurm_settings.pop('--exclude')
+        try:
+            slurm_settings.pop('--exclude')
+        except KeyError:
+            pass
 
     slurm_file_writer = job_manager.SlurmJobFile(
         full_path=slurm_run_file,
@@ -1681,14 +1691,6 @@ def run_opt(reaction_index, opt_type, direction='forward'):
     reaction_log(reaction_index, f'Running SLURM job: {slurm_cmd}')
     gaussian_opt_job.submit(slurm_cmd)
     os.chdir(start_dir)
-
-
-def setup_ts_rotors(reaction_index, direction='forward'):
-    raise NotImplementedError
-
-
-def run_single_point_ts(reaction_index, direction='forward'):
-    raise NotImplementedError
 
 
 def check_vib_irc(reaction_index, gaussian_logfile):
