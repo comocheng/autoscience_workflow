@@ -32,7 +32,6 @@ import autotst.conformer.utilities
 
 # import ase.io
 import ase.constraints
-import ase.io.zmatrix
 import ase.io.gaussian
 import ase.calculators.lj  # the backup built-in calculator. Do not use it for anything important
 import ase.geometry.analysis
@@ -51,7 +50,7 @@ except ImportError:
 
 
 # for rotor scans
-import zmatrix  # https://github.com/wutobias/r2z
+import zmatrix_ase  # https://github.com/wutobias/r2z
 from simtk import unit
 
 
@@ -611,7 +610,7 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
     ]
     rdmol = conformer._rdkit_molecule
     cart_crds = np.array(rdmol.GetConformers()[0].GetPositions()) * unit.angstrom
-    zm = zmatrix.ZMatrix(conformer._rdkit_molecule)
+    zm = zmatrix_ase.ZMatrix(conformer.get_ase_mol())
 
     zm_text = zm.build_pretty_zcrds(cart_crds)
     zm_lines = zm_text.splitlines()
