@@ -22,12 +22,16 @@ aramco = 'aramco' in chemkin.lower()
 working_dir = os.path.join(os.path.dirname(chemkin))
 experimental_table_index = 7  # workflow only requires calculating it here
 table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
+spec_delay_file = os.path.join(table_dir, f'spec_delay_{experimental_table_index:04}_{sp_index:04}.npy')
+if os.path.exists(spec_delay_file):
+    print(f'Skipping {sp_index} because file already exists!')
+    exit(0)
 os.makedirs(table_dir, exist_ok=True)
 
 
 # perturb every species and reaction in the mechanism
 # we'll select the perturbations one at a time later in the script
-def perturb_species(species):
+def perturb_species(species):  # TODO maybe load this from a util Python module so code doesn't get repeated so much
     # takes in an RMG species object
     # change the enthalpy offset
     increase = None
@@ -104,11 +108,6 @@ if not skip_create_perturb:
 
         for i in range(0, len(reaction_list)):
             perturb_reaction(reaction_list[i])
-
-            # try:
-            #     perturb_reaction(reaction_list[i])
-            # except AttributeError:
-            #     continue
 
         # save the results
         rmgpy.chemkin.save_chemkin_file(perturbed_chemkin, species_list, reaction_list, verbose=True, check_for_duplicates=True)
@@ -278,41 +277,32 @@ temperatures = np.linspace(Tmin, Tmax, N)
 
 
 # compute and save the delays
-species_delays = np.zeros((len(perturbed_gas.species()), len(temperatures)))
-
 if sp_index >= len(perturbed_gas.species()):
     print(f'Skipping species {sp_index} because not in model')
     exit(-1)
 
-# for i in range(0, len(perturbed_gas.species())):
-for i in [sp_index]:
-    print(f'perturbing {i} {perturbed_gas.species()[i]}')
+# Note: we have already checked above to make sure the spec_delay_file does not yet exist
 
-    spec_delay_file = os.path.join(table_dir, f'spec_delay_{experimental_table_index:04}_{i:04}.npy')
-    if os.path.exists(spec_delay_file):
-        print(f'skipping {i} because file already exists!')
-        delays = np.load(spec_delay_file)
-        species_delays[i, :] = delays
-        continue
+print(f'perturbing {sp_index} {perturbed_gas.species()[sp_index]}')
 
-    # load the base gas
-    base_gas = ct.Solution(base_yaml_path)
 
-    # run the simulations at condition #j
-    base_gas.modify_species(i, perturbed_gas.species()[i])
+# load the base gas
+base_gas = ct.Solution(base_yaml_path)
 
-    # Run all simulations in parallel
-    delays = np.zeros(len(temperatures))
-    condition_indices = np.arange(0, len(temperatures))
+# run the simulations at condition #j
+base_gas.modify_species(sp_index, perturbed_gas.species()[sp_index])
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
-        for condition_index, delay_time in zip(condition_indices, executor.map(
-            run_simulation,
-            [temperatures[j] for j in condition_indices],
-            [P7[0] for j in condition_indices],
-            [concentrations[0] for j in condition_indices]
-        )):
-            delays[condition_index] = delay_time
-    species_delays[i, :] = delays
+# Run all simulations in parallel
+delays = np.zeros(len(temperatures))
+condition_indices = np.arange(0, len(temperatures))
 
-    np.save(spec_delay_file, delays)
+with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
+    for condition_index, delay_time in zip(condition_indices, executor.map(
+        run_simulation,
+        [temperatures[j] for j in condition_indices],
+        [P7[0] for j in condition_indices],
+        [concentrations[0] for j in condition_indices]
+    )):
+        delays[condition_index] = delay_time
+
+np.save(spec_delay_file, delays)
