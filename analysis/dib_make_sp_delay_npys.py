@@ -215,8 +215,8 @@ concentrations = [conc_dict for i in range(len(ref_table))]
 
 
 # just use the first concentration
-Tmax = 695  # use min and max temperature range of the data: 663K-1077K
-Tmin = 1706
+Tmin = 695  # use min and max temperature range of the data: 695K-1706K
+Tmax = 1706
 N = 51
 temperatures = np.linspace(Tmin, Tmax, N)
 
