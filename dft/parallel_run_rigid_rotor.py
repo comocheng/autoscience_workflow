@@ -76,7 +76,7 @@ angles = np.linspace(0, 360, 21)
 energies = np.zeros(len(angles))
 
 
-atoms.set_dihedral(
+atoms.rotate_dihedral(
     new_cf.torsions[rotor_index].atom_indices[0],
     new_cf.torsions[rotor_index].atom_indices[1],
     new_cf.torsions[rotor_index].atom_indices[2],
