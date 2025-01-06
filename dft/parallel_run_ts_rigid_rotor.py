@@ -20,21 +20,19 @@ import database_fun
 reaction_index = int(sys.argv[1])
 rotor_index = int(sys.argv[2])
 angle_index = int(sys.argv[3])
-autotst_wrapper.reaction_log(f'Running fixed rotor scan for species {reaction_index}, rotor {rotor_index}, angle_index {angle_index}')
+autotst_wrapper.reaction_log(reaction_index, f'Running fixed rotor scan for reaction {reaction_index}, rotor {rotor_index}, angle_index {angle_index}')
 
 
 force_rerun = True
 reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
-arkane_dir = os.path.join(reaction_dir, 'arkane')
-rotor_dir = os.path.join(reaction_dir, 'rotors')
+overall_dir = os.path.join(reaction_dir, 'overall')
 rigid_rotor_dir = os.path.join(reaction_dir, 'rigid_rotors')
-os.makedirs(rotor_dir, exist_ok=True)
 os.makedirs(rigid_rotor_dir, exist_ok=True)
 
 rotor_str = 'rotor'
 
 # check if the rotors were already set up
-rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
+rotor_logfiles = glob.glob(os.path.join(rigid_rotor_dir, f'{rotor_str}_*.com'))
 if force_rerun:
     autotst_wrapper.reaction_log(reaction_index, 'forcing rerun of ts rotors')
 else:
@@ -53,7 +51,7 @@ reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to thi
 
 # Get the lowest energy conformer from the overall result -- look in the arkane folder
 autotst_wrapper.reaction_log(reaction_index, f'Loading TS geometry from gaussian log file')
-starting_geometry_file = glob.glob(os.path.join(arkane_dir, 'fwd_ts_*.log'))[0]
+starting_geometry_file = autotst_wrapper.get_lowest_energy_gaussian_file(overall_dir)
 if not os.path.exists(starting_geometry_file) or autotst_wrapper.get_termination_status(starting_geometry_file) != 0:
     raise OSError('Could not find TS geometry file')
 reaction.ts[direction][0]._ase_molecule = autotst_wrapper.get_gaussian_file_geometry(starting_geometry_file)
@@ -63,7 +61,7 @@ reaction.ts[direction][0].update_coords_from(mol_type="ase")
 torsions = reaction.ts[direction][0].get_torsions()
 n_rotors = len(torsions)
 if n_rotors == 0:
-    no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
+    no_rotor_file = os.path.join(rigid_rotor_dir, 'NO_ROTORS.txt')
     with open(no_rotor_file, 'w') as f:
         f.write('NO ROTORS')
     print(reaction_index, "no rotors to calculate")
