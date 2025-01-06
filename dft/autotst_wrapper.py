@@ -1042,7 +1042,7 @@ def run_ts_rotors(reaction_index, increment_deg=30, force_rerun=False):
     os.chdir(start_dir)
 
 
-def conformers_done_optimizing(base_dir, completion_threshold=0.6, base_name='conformer_'):
+def conformers_done_optimizing(base_dir, completion_threshold=0.2, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     glob_str = os.path.join(base_dir, f'{base_name}*.com')
     # print(f'glob str is {glob_str}')
@@ -1468,7 +1468,7 @@ def delete_double_spaces(gaussian_com_file):
             f.writelines(lines)
 
 
-def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, max_conformers=100):
+def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, max_conformers=MAX_N_CONFORMERS):
     """Function to set up the gaussian files for a particular opt type
     screens the conformers using hotbit, then writes the gaussian input files
     types are 'shell', 'center', 'overall', 'hfsp', 'hfsp_shell', 'hfsp_overall'
