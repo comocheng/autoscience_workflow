@@ -1513,7 +1513,7 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         shell_dir = os.path.join(reaction_dir, 'shell')
         if get_reaction_status(reaction_index, 'shell_opt'):
             pass
-        elif conformers_done_optimizing(shell_dir, base_name=opt_label[:-8]):
+        elif conformers_done_optimizing(shell_dir, base_name=opt_label[:-8], completion_threshold=0.01):
             set_reaction_status(reaction_index, 'shell_opt', True)
         else:
             reaction_log(reaction_index, f'Center opt setup incomplete, shell opt not complete')
@@ -2128,7 +2128,7 @@ def get_HFSP_bond_distances(reaction):
     """Function to estimate the bond distances for the formed and unformed bonds
     Expects an autotst.reaction.Reaction type input"""
 
-    allowed_families = ['Disproportionation', 'H_Abstraction']
+    allowed_families = ['Disproportionation', 'H_Abstraction', '1,3_sigmatropic_rearrangement']
     family = reaction.rmg_reaction.family
     assert family in allowed_families, 'HFSP opt only implemented for Disproportionation and H_Abstraction reactions'
 
@@ -2137,17 +2137,20 @@ def get_HFSP_bond_distances(reaction):
     d14 = None
     d24 = None
 
-    H_label = {
+    H_label = {  # the atom being passed between things
         'Disproportionation': '*4',
         'H_Abstraction': '*2',
+        '1,3_sigmatropic_rearrangement': '*4',  # 1-4  forms, 3-4 breaks, so 4 is the thing being passed
     }
     H_connected_to = {
         'Disproportionation': '*2',
         'H_Abstraction': '*1',
+        '1,3_sigmatropic_rearrangement': '*3',
     }
     H_not_yet_connected_to = {
         'Disproportionation': '*1',
         'H_Abstraction': '*3',
+        '1,3_sigmatropic_rearrangement': '*1'
     }
 
     reactants = []
