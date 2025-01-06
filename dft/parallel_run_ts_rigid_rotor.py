@@ -51,7 +51,7 @@ reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to thi
 
 # Get the lowest energy conformer from the overall result -- look in the arkane folder
 autotst_wrapper.reaction_log(reaction_index, f'Loading TS geometry from gaussian log file')
-starting_geometry_file = autotst_wrapper.get_lowest_energy_gaussian_file(overall_dir)
+starting_geometry_file = autotst_wrapper.get_lowest_valid_ts(overall_dir)
 if not os.path.exists(starting_geometry_file) or autotst_wrapper.get_termination_status(starting_geometry_file) != 0:
     raise OSError('Could not find TS geometry file')
 reaction.ts[direction][0]._ase_molecule = autotst_wrapper.get_gaussian_file_geometry(starting_geometry_file)

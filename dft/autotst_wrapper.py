@@ -70,7 +70,7 @@ except KeyError:
     DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
 MAX_JOBS_RUNNING = 50
-MAX_N_CONFORMERS = 100
+MAX_N_CONFORMERS = 10
 MAX_JOBS_PER_TASK = 30
 
 
@@ -259,7 +259,7 @@ def ordered_array_str(list_of_indices):
 
 def screen_species_conformers(species_index):
     """Sort through all the possible conformers and use a cheap calculator
-    like Hotbit or LJ to screen the best options to investigate
+    like Hotbit or xtb
 
     NOTE DO NOT USE LJ TO SCREEN CONFORMER GEOMETRIES. IT'S TERRIBLE
     It should only be used to test for obvious errors in the workflow if Hotbit is not installed
@@ -292,7 +292,8 @@ def screen_species_conformers(species_index):
     species_log(species_index, f'Loaded species {species_smiles}')
 
     try:
-        calc = hotbit.Hotbit()
+        # calc = hotbit.Hotbit()
+        calc = xtb.ase.calculator.XTB()
     except (NameError, RuntimeError):
         # if hotbit fails, use built-in lennard jones
         species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit. DO NOT DO THIS')
@@ -461,12 +462,9 @@ def setup_single_point(index, calc_type='species', force_rerun=False, parallel=T
         except arkane.exceptions.LogError:
             pass
     if calc_type == 'species':
-        species_log(index, 'Setting up single point calculation job')
+        conformer_file = get_lowest_valid_conformer(conformer_dir, index, calc_type=calc_type)
     elif calc_type == 'reaction':
-        reaction_log(index, 'Setting up single point calculation job')
-
-    # Get lowest energy conformer file
-    conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
+        conformer_file = get_lowest_valid_ts(conformer_dir)
 
     # grab the xyz coordinates from the conformer file and save to xyz file
     gaussian_logfile = arkane.ess.gaussian.GaussianLog(conformer_file)
@@ -592,7 +590,7 @@ def run_single_point(index, calc_type='species', force_rerun=False):
     os.chdir(start_dir)
 
 
-def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
+def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0, freeze_core=False):
     """Function to write a Gaussian rotor scan
     Takes an autoTST conformer and a rotor index
     """
@@ -600,7 +598,7 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
     # header
     scan_job_lines = [
         "%mem=5GB",
-        "%nprocshared=48",
+        "%nprocshared=16",
         "#P m062x/cc-pVTZ",
         "Opt=(CalcFC,ModRedun)",
         "",
@@ -691,6 +689,25 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0):
     N_increments = int(360.0 / degree_delta)
     scan_job_lines.append(f"D {first} {second} {third} {fourth} S {N_increments} {float(degree_delta)}")
 
+    # Freeze the reaction center/core if this is a TS rotor scan
+    if freeze_core:
+        # figure out which atoms are in the core
+        # TODO move this code to AutoTST -- it should have a function for determining core atoms
+        labels = conformer.rmg_molecule.get_all_labeled_atoms()
+        if len(labels) == 3:  # H Abstraction, intra H migration, R Addition multiple bond
+            indices = [conformer.rmg_molecule.atoms.index(labels[x]) for x in ['*1', '*2', '*3']]
+        elif len(labels) == 4:  # Disproportionation
+            indices = [conformer.rmg_molecule.atoms.index(labels[x]) for x in ['*1', '*2', '*4']]
+
+        # convert to z-matrix index
+        atom1 = zm.a2z(indices[0]) + 1
+        atom2 = zm.a2z(indices[1]) + 1
+        atom3 = zm.a2z(indices[2]) + 1
+        # Freeze the reacting core by freezing two bond-lengths and one angle
+        scan_job_lines.append(f"B {atom1} {atom2} F")
+        scan_job_lines.append(f"B {atom2} {atom3} F")
+        scan_job_lines.append(f"A {atom1} {atom2} {atom3} F")
+
     scan_job_lines.append("")
     with open(fname, 'w') as f:
         for line in scan_job_lines:
@@ -727,24 +744,7 @@ def setup_rotors(species_index, increment_deg=20):
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
 
-    valid_conformer = False
-    conformer_blacklist = []
-    while not valid_conformer:
-        conformer_file = get_lowest_energy_gaussian_file(conformer_dir, blacklist=conformer_blacklist)
-        if not conformer_file:
-            species_log(species_index, f'Failed to find lowest energy gaussian file in {conformer_dir}')
-            species_log(species_index, f'Conformer blacklist is {conformer_blacklist}')
-
-        if bonds_too_large(conformer_file, species_index):
-            conformer_blacklist.append(conformer_file)
-            species_log(species_index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
-        else:
-            valid_conformer = True
-            species_log(species_index, f'Lowest energy conformer is {conformer_file}')
-
-        if len(conformer_blacklist) >= len(glob.glob(os.path.join(conformer_dir, 'conformer_*.log'))):
-            species_log(species_index, f'No valid conformers found. Quitting...')
-            return False
+    conformer_file = get_lowest_valid_conformer(conformer_dir, species_index)
 
     new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
     shutil.copy(conformer_file, new_conformer_loc)
@@ -833,7 +833,7 @@ def run_rotors(species_index, increment_deg=20):
         '--partition': 'west,short',
         '--exclude': 'c5003',
         '--mem': '20Gb',
-        '--time': '24:00:00',
+        '--time': '48:00:00',
         '--cpus-per-task': 16,
         '--array': f'0-{n_rotors - 1}%{MAX_JOBS_PER_TASK}',
     }
@@ -931,9 +931,10 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False):
         return True
 
     print("generating gaussian input files")
+    # figure out which atoms compose the reaction core
     for i, torsion in enumerate(reaction.ts[direction][0].torsions):
         fname = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.com')
-        write_scan_file(fname, reaction.ts[direction][0], i, degree_delta=increment_deg)
+        write_scan_file(fname, reaction.ts[direction][0], i, degree_delta=increment_deg, freeze_core=True)
     return True
 
 
@@ -964,21 +965,23 @@ def run_ts_rotors(reaction_index, increment_deg=30, force_rerun=False):
     rerun_indices = []
     failed_indices = []
     n_rotors = len(glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com')))
-    for i in range(0, n_rotors):
-        rotor_logfile = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.log')
-        if os.path.exists(rotor_logfile):
-            termination_status = get_termination_status(rotor_logfile)
-            if termination_status != 0:
-                failed_indices.append(i)
-            if termination_status == -1:
-                rerun_indices.append(i)
-                reaction_log(reaction_index, f'TS rotor {i} did not complete')
 
-    rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.log'))
+    if not force_rerun:  # don't bother checking for completed scans if we're forcing the rerun
+        for i in range(0, n_rotors):
+            rotor_logfile = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.log')
+            if os.path.exists(rotor_logfile):
+                termination_status = get_termination_status(rotor_logfile)
+                if termination_status != 0:
+                    failed_indices.append(i)
+                if termination_status == -1:
+                    rerun_indices.append(i)
+                    reaction_log(reaction_index, f'TS rotor {i} did not complete')
 
-    if rotor_logfiles and not rerun_indices:
-        reaction_log(reaction_index, f'Some rotors {failed_indices} failed but there are no calculations left to run.')
-        return False
+        rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.log'))
+
+        if rotor_logfiles and not rerun_indices:
+            reaction_log(reaction_index, f'Some rotors {failed_indices} failed but there are no calculations left to run.')
+            return False
 
     reaction_log(reaction_index, f'Starting rotor scans optimization job')
     # Make slurm script to run all the rotor calculations
@@ -990,7 +993,7 @@ def run_ts_rotors(reaction_index, increment_deg=30, force_rerun=False):
         '--partition': 'short',
         '--constraint': 'cascadelake',
         '--mem': '20Gb',
-        '--time': '24:00:00',
+        '--time': '48:00:00',
         '--cpus-per-task': 16,
         '--array': f'0-{n_rotors - 1}%{MAX_JOBS_PER_TASK}',
     }
@@ -1134,6 +1137,51 @@ def get_gaussian_file_geometry(gaussian_log_file):
         return atoms
 
 
+def get_lowest_valid_conformer(conformer_dir, index, calc_type='species'):
+    assert calc_type in ['species', 'reaction']
+    if calc_type == 'reaction':
+        raise NotImplementedError("This doesn't work yet for TS objects, I think the RMG numbering isn't matching up with the loaded ase indices")
+
+    if calc_type == 'species':
+        base_name = 'conformer_*.log'
+    elif calc_type == 'reaction':
+        base_name = 'fwd_ts*.log'
+
+    valid_conformer = False
+    conformer_blacklist = []
+    while not valid_conformer:
+        conformer_file = get_lowest_energy_gaussian_file(conformer_dir, blacklist=conformer_blacklist)
+        if not conformer_file:
+            if calc_type == 'species':
+                species_log(index, f'Failed to find lowest energy gaussian file in {conformer_dir}')
+                species_log(index, f'Conformer blacklist is {conformer_blacklist}')
+            elif calc_type == 'reaction':
+                reaction_log(index, f'Failed to find lowest energy gaussian file in {conformer_dir}')
+                reaction_log(index, f'Conformer blacklist is {conformer_blacklist}')
+
+        if bonds_too_large(conformer_file, index, calc_type=calc_type):
+            conformer_blacklist.append(conformer_file)
+            if calc_type == 'species':
+                species_log(index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
+            elif calc_type == 'reaction':
+                reaction_log(index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
+        else:
+            valid_conformer = True
+            if calc_type == 'species':
+                species_log(index, f'Lowest energy conformer is {conformer_file}')
+            elif calc_type == 'reaction':
+                reaction_log(index, f'Lowest energy conformer is {conformer_file}')
+            break
+
+        if len(conformer_blacklist) >= len(glob.glob(os.path.join(conformer_dir, base_name))):
+            if calc_type == 'species':
+                species_log(index, f'No valid conformers found. Quitting...')
+            elif calc_type == 'reaction':
+                reaction_log(index, f'No valid conformers found. Quitting...')
+            return False
+    return conformer_file
+
+
 def get_lowest_energy_gaussian_file(base_dir, blacklist=[]):
     """Function to get the lowest energy gaussian .log file from a directory"""
     lowest_energy = 1e6
@@ -1155,16 +1203,30 @@ def get_lowest_energy_gaussian_file(base_dir, blacklist=[]):
     return lowest_file
 
 
-def bonds_too_large(conformer_file, species_index):
+def bonds_too_large(conformer_file, index, calc_type='species'):
     """Function to check whether the bonds are too big to make sense for a given species"""
+    assert calc_type in ['species', 'reaction']
+    if calc_type == 'reaction':
+        raise NotImplementedError("This doesn't work yet for TS objects, I think the RMG numbering isn't matching up with the loaded ase indices")
 
     with open(conformer_file, 'r') as f:
         atoms = ase.io.gaussian.read_gaussian_out(f)
 
     # make a conformer object again
-    rmg_species = database_fun.index2species(species_index)
-    species_smiles = rmg_species.smiles
-    new_cf = autotst.species.Conformer(smiles=species_smiles)
+    if calc_type == 'species':
+        rmg_species = database_fun.index2species(index)
+        species_smiles = rmg_species.smiles
+        new_cf = autotst.species.Conformer(smiles=species_smiles)
+        BASE_CH = 1.0932774602784967  # C-H in butane
+        BASE_CC = 1.5240247836472345  # C-C in butane
+    elif calc_type == 'reaction':
+        rmg_reaction = database_fun.index2reaction(index)
+        reaction_smiles = database_fun.reaction_index2smiles(index)
+        reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to this even though it's not dependable
+        new_cf = reaction.ts['forward'][0]
+        BASE_CH = 1.4
+        BASE_CC = 1.7
+
     new_cf._ase_molecule = atoms
     new_cf.update_coords_from(mol_type="ase")
 
@@ -1173,23 +1235,24 @@ def bonds_too_large(conformer_file, species_index):
             new_cf._ase_molecule[bond.atom_indices[1]].symbol
 
         if 'H' in bondtype:
-            threshold = 1.5 * 1.0932774602784967  # C-H in butane
+            threshold = 1.5 * BASE_CH
         else:
-            threshold = 1.5 * 1.5240247836472345  # C-C in butane
+            threshold = 1.5 * BASE_CC
 
         if new_cf._ase_molecule.get_distances(*bond.atom_indices)[0] > threshold:
+            print(bondtype, new_cf._ase_molecule.get_distances(*bond.atom_indices)[0])
             return True
 
     return False
 
 
-def get_rotor_info(conformer, torsion, torsion_index):
+def get_rotor_info(conformer, torsion, torsion_index, relaxed=True):
+    # relaxed = True for relaxed rotor scans vs. fixed rotor scans with no optimization
     _, j, k, _ = torsion.atom_indices
 
     # Adjusted since mol's IDs start from 0 while Arkane's start from 1
     tor_center_adj = [j + 1, k + 1]
 
-    tor_log = f'rotor_{torsion_index:04}.log'
     top_IDs = []
     for num, tf in enumerate(torsion.mask):
         if tf:
@@ -1198,8 +1261,12 @@ def get_rotor_info(conformer, torsion, torsion_index):
     # Adjusted to start from 1 instead of 0
     top_IDs_adj = [ID + 1 for ID in top_IDs]
 
-    info = f"     HinderedRotor(scanLog=Log('{tor_log}'), pivots={tor_center_adj}, top={top_IDs_adj}, fit='fourier'),"
-
+    if relaxed:
+        tor_log = f'rotor_{torsion_index:04}.log'
+        info = f"     HinderedRotor(scanLog=Log('{tor_log}'), pivots={tor_center_adj}, top={top_IDs_adj}, fit='fourier'),"
+    else:
+        tor_log = f'rotor_{torsion_index:04}_scan_energies.txt'
+        info = f"     HinderedRotor(scanLog=ScanLog('{tor_log}'), pivots={tor_center_adj}, top={top_IDs_adj}, fit='fourier'),"
     return info
 
 
@@ -1432,7 +1499,6 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         reaction_log(reaction_index, f'{opt_type} opt setup complete')
         return True
 
-    screen_dir = os.path.join(reaction_dir, 'screen')
     opt_dir = os.path.join(reaction_dir, opt_type)
     os.makedirs(opt_dir, exist_ok=True)
 
@@ -1486,7 +1552,8 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     reaction.ts[direction][0].get_molecules()
 
     try:  # TODO fix issues with import in a try block
-        calc = hotbit.Hotbit()
+        # calc = hotbit.Hotbit()
+        calc = xtb.ase.calculator.XTB()
     except (NameError, RuntimeError):
         # if hotbit fails, use built-in lennard jones
         reaction_log(reaction_index, 'Using built-in ase LennardJones calculator instead of Hotbit')
@@ -1494,9 +1561,10 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         if job_manager.get_user() == 'harris.se':
             raise ImportError('You really need to use Hotbit or xtb. LJ is not good enough sorry')
         calc = ase.calculators.lj.LennardJones()
+
     reaction.generate_conformers(
         ase_calculator=calc,
-        max_combos=max_combos,
+        max_combos=max_combos,  # maybe make this a function of how many large atoms there are
         max_conformers=max_conformers,
         save_results=True,
         results_dir=screen_dir,
@@ -1733,19 +1801,93 @@ def arkane_reaction_complete(reaction_index):
     return os.path.exists(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'arkane', 'RMG_libraries', 'reactions.py'))
 
 
-def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False, overall_dirname='overall'):
+def assemble_rotor_scan_energies(rigid_rotor_dir, rotor_index):
+    angles = np.linspace(0, 360, 21)
+    my_txt = os.path.join(rigid_rotor_dir, f'rotor_{rotor_index:04}_scan_energies.txt')
+    lines = [
+        'Angle (degrees)\t\tEnergy (kJ/mol)\n',
+    ]
+    energies = np.zeros(len(angles))
+    for j in range(len(angles)):
+        rotor_file = os.path.join(rigid_rotor_dir, f'rotor_{rotor_index:04}_{j:04}.log')
+        try:
+            gl = arkane.ess.gaussian.GaussianLog(rotor_file)
+        except (arkane.exceptions.LogError, FileNotFoundError):
+            energies[j] = np.nan
+            continue
+        energies[j] = gl.load_energy() / 1000.0
+
+    # rearrange...
+    angles = list(angles[:-1])  # get rid of the final calculation cause it's a repeat
+    energies = list(energies[:-1])
+
+    # rearrange so the lowest energy is first...
+    start_index = energies.index(np.nanmin(energies))
+    energies = np.array(energies[start_index:] + energies[:start_index])
+
+    for j in range(len(angles)):
+        if np.isnan(energies[j]):
+            continue
+        lines.append(f'{angles[j]}    {energies[j]}' + '\n')
+
+    with open(my_txt, 'w') as f:
+        f.writelines(lines)
+
+
+def get_lowest_valid_ts(overall_dir, fake_valid_ts=False, reaction_index=None):
+    # fake_valid_ts is a variable to skip checking the irc value
+    TS_logs = glob.glob(os.path.join(overall_dir, f'fwd_ts_*.log'))
+    TS_log = ''
+    lowest_energy = 1e5
+    if not reaction_index:
+        try:
+            reaction_index = int(os.path.basename(os.path.dirname(overall_dir))[-6:])
+        except ValueError:
+            pass
+
+    for logfile in TS_logs:
+        # skip if the TS is not valid
+        if fake_valid_ts:
+            pass  # we are skipping the vib check
+        elif reaction_index is None:
+            raise ValueError('You need to pass in the reaction index or use the directory structure reaction_123456/overall_dir')
+        elif not check_vib_irc(reaction_index, logfile):
+            continue
+
+        # skip if the bonds don't match what's expected
+        if not verify_bond_count(reaction_index, gaussian_file=logfile):
+            continue
+
+        try:
+            g_reader = arkane.ess.gaussian.GaussianLog(logfile)
+            energy = g_reader.load_energy()
+            if energy < lowest_energy:
+                lowest_energy = energy
+                TS_log = logfile
+        except arkane.exceptions.LogError:
+            print(f'skipping bad logfile {logfile}')
+            continue
+    if not TS_log:
+        raise ValueError('No Valid TS found')
+    return TS_log
+
+
+def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False, overall_dirname='overall', force_rerun=False):
     """Function to setup the arkane job for a reaction
     overall_dirname is where to get the TS logs from, alternatives are 'hfsp' and 'hfsp_overall'
     """
     # check if the arkane job was already completed
-    if get_reaction_status(reaction_index, 'arkane_calc'):
-        reaction_log(reaction_index, 'Arkane job already ran')
-        return True
-    elif arkane_reaction_complete(reaction_index):
-        set_reaction_status(reaction_index, 'arkane_setup', True)
-        set_reaction_status(reaction_index, 'arkane_calc', True)
-        reaction_log(reaction_index, 'Arkane job already ran')
-        return True
+    if force_rerun:
+        reaction_log(reaction_index, 'Forcing rerun of Arkane setup')
+    else:
+        if get_reaction_status(reaction_index, 'arkane_calc'):
+            reaction_log(reaction_index, 'Arkane job already ran')
+            return True
+        elif arkane_reaction_complete(reaction_index):
+            set_reaction_status(reaction_index, 'arkane_setup', True)
+            set_reaction_status(reaction_index, 'arkane_calc', True)
+            reaction_log(reaction_index, 'Arkane job already ran')
+            return True
 
     # # Check for overall job status completion
     # if not get_reaction_status(reaction_index, 'overall_opt'):
@@ -1754,14 +1896,18 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
 
     reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
     reaction_log(reaction_index, f'starting setup_arkane_reaction for reaction {reaction_index} {reaction_smiles}')
-
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
+    rigid_rotor_dir = os.path.join(reaction_dir, 'rigid_rotors')
     overall_dir = os.path.join(reaction_dir, overall_dirname)
     arkane_dir = os.path.join(reaction_dir, 'arkane')
+    arkane_ts_dir = os.path.join(arkane_dir, 'ts')
     os.makedirs(arkane_dir, exist_ok=True)
+    os.makedirs(arkane_ts_dir, exist_ok=True)
 
     species_dict_file = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'RMG_example_fuel_YYYYMMDD', 'species_dictionary.txt')
     species_dict = rmgpy.chemkin.load_species_dictionary(species_dict_file)
+
+    # TODO shouldn't rely on the dictionary. Use the species number in the database
 
     def get_sp_name(smiles):
         # if smiles == '[CH2]C=CC':  # manually change to resonance structures included in model
@@ -1794,37 +1940,18 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     reaction.ts[direction][0].get_molecules()
 
     # pick the lowest energy valid transition state:
-    TS_logs = glob.glob(os.path.join(overall_dir, f'fwd_ts_*.log'))
-    TS_log = ''
-    lowest_energy = 1e5
-    for logfile in TS_logs:
-        # skip if the TS is not valid
-        if not force_valid_ts:
-            if not check_vib_irc(reaction_index, logfile):
-                continue
-
-        # skip if the bonds don't match what's expected
-        if not verify_bond_count(reaction_index, gaussian_file=logfile):
-            continue
-
-        try:
-            g_reader = arkane.ess.gaussian.GaussianLog(logfile)
-            energy = g_reader.load_energy()
-            if energy < lowest_energy:
-                lowest_energy = energy
-                TS_log = logfile
-        except arkane.exceptions.LogError:
-            print(f'skipping bad logfile {logfile}')
-            continue
-    if not TS_log:
-        raise ValueError('No Valid TS found')
+    TS_log = get_lowest_valid_ts(overall_dir)
 
     # -------------------- Write the input file ---------------------- #
-    model_chemistry = 'M06-2X/cc-pVTZ'
+    # TODO move the model chemistry to a single variable at the top for easy customization
+    model_chemistry = 'dlpnoccsd(t)f122023/ccpvtzf12//M06-2X/cc-pVTZ'
+    energy_lot = 'dlpnoccsd(t)f122023/ccpvtzf12'
+    geometry_lot = 'M06-2X/cc-pVTZ'
+    freq_lot = 'M06-2X/cc-pVTZ'
     lines = [
         f'modelChemistry = "{model_chemistry}"\n',
-        'useHinderedRotors = False\n',
-        'useBondCorrections = False\n\n',
+        'useHinderedRotors = True\n',
+        'useBondCorrections = True\n\n',
     ]
 
     completed_species = []
@@ -1861,6 +1988,9 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
             raise IndexError(f'No species conformer file found in {species_arkane_dir}')
 
         try:
+            if force_rerun:
+                if os.path.exists(os.path.join(arkane_dir, f'species_{species_index:04}')):
+                    shutil.rmtree(os.path.join(arkane_dir, f'species_{species_index:04}'))
             shutil.copytree(species_arkane_dir, os.path.join(arkane_dir, f'species_{species_index:04}'))
         except FileExistsError:
             pass
@@ -1872,12 +2002,22 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
 
         completed_species.append(reactant)
 
+    # copy the transition state orca single point log
+    orca_sp_log = os.path.join(reaction_dir, 'single_point', 'conformer.out')
+    if force_rerun:
+        if os.path.exists(os.path.join(arkane_ts_dir, 'conformer.out')):
+            os.remove(os.path.join(arkane_ts_dir, 'conformer.out'))
+    shutil.copy(orca_sp_log, os.path.join(arkane_ts_dir, 'conformer.out'))
+
     lines.append('\n')
 
     TS_name = 'TS'
-    TS_file = 'TS.py'
+    TS_file = 'ts/TS.py'
     TS_arkane_path = os.path.join(arkane_dir, TS_file)
-    shutil.copy(TS_log, arkane_dir)
+    if force_rerun:
+        if os.path.exists(os.path.join(arkane_ts_dir, os.path.basename(TS_log))):
+            os.remove(os.path.join(arkane_ts_dir, os.path.basename(TS_log)))
+    shutil.copy(TS_log, arkane_ts_dir)
 
     lines.append(f'transitionState("{TS_name}", "{TS_file}")\n')
 
@@ -1897,10 +2037,34 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
 
     # write the TS file
     ts_lines = [
-        'energy = {"' + f'{model_chemistry}": Log("{os.path.basename(TS_log)}")' + '}\n\n',
+        'energy = {"' + f'{energy_lot}": Log("conformer.out")' + '}\n\n',
         'geometry = Log("' + f'{os.path.basename(TS_log)}")' + '\n\n',
         'frequencies = Log("' + f'{os.path.basename(TS_log)}")' + '\n\n',
     ]
+
+    # add the rotors...
+    conformer = reaction.ts[direction][0]
+    torsions = conformer.get_torsions()
+    n_rotors = len(torsions)
+
+    if n_rotors > 0:
+        reaction_log(reaction_index, 'writing hindered rotors')
+        ts_lines.append("rotors = [\n")
+        if len(conformer.torsions) == 0:
+            conformer.get_molecules()
+            conformer.get_geometries()
+        for i, torsion in enumerate(conformer.torsions):
+            rotor_file = os.path.join(rigid_rotor_dir, f'rotor_{i:04}_scan_energies.txt')
+            if not os.path.exists(rotor_file):
+                assemble_rotor_scan_energies(rigid_rotor_dir, i)
+
+            if force_rerun:
+                if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt')):
+                    os.remove(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt'))
+            shutil.copy(rotor_file, arkane_ts_dir)
+            ts_lines.append(get_rotor_info(conformer, torsion, i, relaxed=False) + '\n')
+        ts_lines.append("]\n")
+
     with open(TS_arkane_path, 'w') as g:
         g.writelines(ts_lines)
 
@@ -1922,21 +2086,24 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     set_reaction_status(reaction_index, 'arkane_setup', True)
 
 
-def run_arkane_reaction(reaction_index, direction='forward'):
+def run_arkane_reaction(reaction_index, direction='forward', force_rerun=False):
     # Run the arkane job
 
     # check if the arkane job was already completed
-    if get_reaction_status(reaction_index, 'arkane_calc'):
-        reaction_log(reaction_index, 'Arkane job already ran')
-        return True
-    elif arkane_reaction_complete(reaction_index):
-        set_reaction_status(reaction_index, 'arkane_setup', True)
-        set_reaction_status(reaction_index, 'arkane_calc', True)
-        reaction_log(reaction_index, 'Arkane job already ran')
-        return True
-    elif not get_reaction_status(reaction_index, 'arkane_setup'):
-        reaction_log(reaction_index, 'Arkane job not set up.')
-        return False
+    if force_rerun:
+        reaction_log(reaction_index, 'Forcing rerun of arkane reaction run')
+    else:
+        if get_reaction_status(reaction_index, 'arkane_calc'):
+            reaction_log(reaction_index, 'Arkane job already ran')
+            return True
+        elif arkane_reaction_complete(reaction_index):
+            set_reaction_status(reaction_index, 'arkane_setup', True)
+            set_reaction_status(reaction_index, 'arkane_calc', True)
+            reaction_log(reaction_index, 'Arkane job already ran')
+            return True
+        elif not get_reaction_status(reaction_index, 'arkane_setup'):
+            reaction_log(reaction_index, 'Arkane job not set up.')
+            return False
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     arkane_dir = os.path.join(reaction_dir, 'arkane')
