@@ -124,6 +124,30 @@ def get_termination_status(log_file):
         return -1
 
 
+def get_reaction_index_from_path(path):
+    pattern = 'reaction_(\d\d\d\d\d\d)'  # get the conformer index on each .com file (last 4 digits before .com)
+    m1 = re.search(pattern, path)
+    if not m1:
+        return -1
+    return int(m1[1])
+
+
+def get_species_index_from_path(path):
+    pattern = 'species_(\d\d\d\d)'  # get the conformer index on each .com file (last 4 digits before .com)
+    m1 = re.search(pattern, path)
+    if not m1:
+        return -1
+    return int(m1[1])
+
+
+def get_rotor_index_from_path(path):
+    pattern = 'rotor_(\d\d\d\d)'  # get the conformer index on each .com file (last 4 digits before .com)
+    m1 = re.search(pattern, path)
+    if not m1:
+        return -1
+    return int(m1[1])
+
+
 def species_log(species_index, message):
     """Function to log messages to the species log file"""
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
@@ -476,7 +500,8 @@ def setup_single_point(index, calc_type='species', force_rerun=False, parallel=T
         rmg_species = database_fun.index2species(index)
     elif calc_type == 'reaction':
         rmg_reaction = database_fun.index2reaction(index)
-        reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+        smiles = database_fun.reaction2smiles(rmg_reaction)
+        reaction = autotst.reaction.Reaction(label=smiles)
         reaction.get_labeled_reaction()
         reaction.get_label()
         direction = 'forward'
@@ -1137,15 +1162,19 @@ def get_gaussian_file_geometry(gaussian_log_file):
         return atoms
 
 
-def get_lowest_valid_conformer(conformer_dir, index, calc_type='species'):
+def get_lowest_valid_conformer(conformer_dir, index=None, calc_type='species'):
     assert calc_type in ['species', 'reaction']
     if calc_type == 'reaction':
         raise NotImplementedError("This doesn't work yet for TS objects, I think the RMG numbering isn't matching up with the loaded ase indices")
 
     if calc_type == 'species':
         base_name = 'conformer_*.log'
+        if index is None:
+            index = get_species_index_from_path(conformer_dir)
     elif calc_type == 'reaction':
         base_name = 'fwd_ts*.log'
+        if index is None:
+            index = get_reaction_index_from_path(conformer_dir)
 
     valid_conformer = False
     conformer_blacklist = []
@@ -1587,7 +1616,7 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         # -------- Adjust the starting geometry to result of previous run if applicable --------------
         if opt_type in ['hfsp' or 'hfsp_shell']:
             # Use HFSP to come up with the TS starting geometry
-            if reaction.rmg_reaction.family not in ['Disproportionation', 'H_Abstraction']:
+            if reaction.rmg_reaction.family not in ['Disproportionation', 'H_Abstraction', '1,3_sigmatropic_rearrangement']:
                 raise NotImplementedError('HFSP opt only implemented for Disproportionation and H_Abstraction reactions')
             try:
                 d14, d24 = get_HFSP_bond_distances(reaction)  # <---- this takes a while and is the same for each conformer so only run once
@@ -1801,7 +1830,9 @@ def arkane_reaction_complete(reaction_index):
     return os.path.exists(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'arkane', 'RMG_libraries', 'reactions.py'))
 
 
-def assemble_rotor_scan_energies(rigid_rotor_dir, rotor_index):
+def assemble_rotor_scan_energies(rigid_rotor_dir, rotor_index=None):
+    if rotor_index is None:
+        rotor_index = get_rotor_index_from_path(rigid_rotor_dir)
     angles = np.linspace(0, 360, 21)
     my_txt = os.path.join(rigid_rotor_dir, f'rotor_{rotor_index:04}_scan_energies.txt')
     lines = [
@@ -1817,13 +1848,13 @@ def assemble_rotor_scan_energies(rigid_rotor_dir, rotor_index):
             continue
         energies[j] = gl.load_energy() / 1000.0
 
-    # rearrange...
-    angles = list(angles[:-1])  # get rid of the final calculation cause it's a repeat
-    energies = list(energies[:-1])
+    # # rearrange...  # Do not do this. Changed the rotor scans so they start at the correct zero
+    # angles = list(angles[:-1])  # get rid of the final calculation cause it's a repeat
+    # energies = list(energies[:-1])
 
-    # rearrange so the lowest energy is first...
-    start_index = energies.index(np.nanmin(energies))
-    energies = np.array(energies[start_index:] + energies[:start_index])
+    # # rearrange so the lowest energy is first...
+    # start_index = energies.index(np.nanmin(energies))
+    # energies = np.array(energies[start_index:] + energies[:start_index])
 
     for j in range(len(angles)):
         if np.isnan(energies[j]):
@@ -2193,10 +2224,12 @@ def get_HFSP_bond_distances(reaction):
         relabel_atoms=False
     )
     # reorder labeled_p according to species index to match the conformers we built
-    if database_fun.get_unique_species_index(labeled_p[0]) > database_fun.get_unique_species_index(labeled_p[1]):
-        labeled_p = [labeled_p[1], labeled_p[0]]
-    if database_fun.get_unique_species_index(labeled_r[0]) > database_fun.get_unique_species_index(labeled_r[1]):
-        labeled_r = [labeled_r[1], labeled_r[0]]
+    if len(labeled_p) > 1:
+        if database_fun.get_unique_species_index(labeled_p[0]) > database_fun.get_unique_species_index(labeled_p[1]):
+            labeled_p = [labeled_p[1], labeled_p[0]]
+    if len(labeled_r) > 1:
+        if database_fun.get_unique_species_index(labeled_r[0]) > database_fun.get_unique_species_index(labeled_r[1]):
+            labeled_r = [labeled_r[1], labeled_r[0]]
 
     # Get the 2-4 bond distance - H and what it's already connected to
     atom_labels = labeled_r[0].get_all_labeled_atoms()
@@ -2355,21 +2388,24 @@ def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
     """
     direction = 'forward'  # TODO find out if there's a case where we'll ever use reverse
 
-    allowed_families = ['Disproportionation', 'H_Abstraction']
+    allowed_families = ['Disproportionation', 'H_Abstraction', '1,3_sigmatropic_rearrangement']
     family = reaction.rmg_reaction.family
     assert family in allowed_families, 'HFSP opt only implemented for Disproportionation reactions'
 
     H_label = {
         'Disproportionation': '*4',
-        'H_Abstraction': '*2'
+        'H_Abstraction': '*2',
+        '1,3_sigmatropic_rearrangement': '*4',
     }
     H_connected_to = {
         'Disproportionation': '*2',
-        'H_Abstraction': '*1'
+        'H_Abstraction': '*1',
+        '1,3_sigmatropic_rearrangement': '*3',
     }
     H_not_yet_connected_to = {
         'Disproportionation': '*1',
-        'H_Abstraction': '*3'
+        'H_Abstraction': '*3',
+        '1,3_sigmatropic_rearrangement': '*1'
     }
 
     atom_labels = reaction.ts[direction][conformer_index].rmg_molecule.get_all_labeled_atoms()
@@ -2454,7 +2490,9 @@ def verify_bond_count(reaction_index, gaussian_file=None):
         return bonds_of_type
 
     rmg_reaction = database_fun.index2reaction(reaction_index)
-    reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
+    smiles = database_fun.reaction2smiles(rmg_reaction)
+    reaction = autotst.reaction.Reaction(label=smiles)
     reaction.get_labeled_reaction()
     reaction.get_label()
     reaction.ts['forward'][0].get_molecules()
