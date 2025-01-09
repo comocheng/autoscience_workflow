@@ -166,94 +166,6 @@ def reaction_log(reaction_index, message):
         f.write(f'{datetime.datetime.now()} {message}' + '\n')
 
 
-def get_species_status(species_index, job_type):
-    """Check the status of the part of the species calculation by looking in the status file
-    Possibilities are:
-        - screen_conformers - complete if the conformer optimization files have been generated
-        - conformer_opt - run Gaussian to optimize the conformers
-    """
-    status_file = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'status.yaml')
-    if not os.path.exists(status_file):
-        return False
-    with open(status_file, 'r') as f:
-        try:
-            status = yaml.load(f, Loader=yaml.FullLoader)
-        except AttributeError:
-            status = yaml.safe_load(f)
-    if job_type in status:
-        return status[job_type]
-    return False
-
-
-def get_reaction_status(reaction_index, job_type):
-    """Check the status of the part of the reaction calculation by looking in the status file
-    Possibilities are:
-        - shell_setup
-        - center_setup
-        - overall_setup
-        - shell_opt - run Gaussian to optimize the conformers
-        - center_opt
-        - overall_opt
-        - arkane?
-        - hfsp?
-    """
-    status_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'status.yaml')
-    if not os.path.exists(status_file):
-        return False
-    with open(status_file, 'r') as f:
-        try:
-            status = yaml.load(f, Loader=yaml.FullLoader)
-        except AttributeError:
-            status = yaml.safe_load(f)
-    if job_type in status:
-        return status[job_type]
-    return False
-
-
-def set_species_status(species_index, job_type, job_status):
-    """Set the status of the part of the species calculation by writing the status file
-    Possibilities are:
-        - screen_conformers - complete if the conformer optimization files have been generated
-        - conformer_opt - run Gaussian to optimize the conformers
-    """
-    status_file = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'status.yaml')
-    status = {}
-    if os.path.exists(status_file):
-        with open(status_file, 'r') as f:
-            try:
-                status = yaml.load(f, Loader=yaml.FullLoader)
-            except AttributeError:
-                status = yaml.safe_load(f)
-    status[job_type] = job_status
-    with open(status_file, 'w') as f:
-        yaml.dump(status, f)
-
-
-def set_reaction_status(reaction_index, job_type, job_status):
-    """Set the status of the part of the reaction calculation by writing the status file
-    Possibilities are:
-        # TODO delete screen_conformers?
-        - shell_setup
-        - center_setup
-        - overall_setup
-        - shell_opt - run Gaussian to optimize the conformers
-        - center_opt
-        - overall_opt
-        - arkane?
-    """
-    status_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'status.yaml')
-    status = {}
-    if os.path.exists(status_file):
-        with open(status_file, 'r') as f:
-            try:
-                status = yaml.load(f, Loader=yaml.FullLoader)
-            except AttributeError:
-                status = yaml.safe_load(f)
-    status[job_type] = job_status
-    with open(status_file, 'w') as f:
-        yaml.dump(status, f)
-
-
 def ordered_array_str(list_of_indices):
     # convenient script for putting a list of task numbers into a string that can be used for a SLURM array job
     # assume it's sorted
@@ -281,7 +193,7 @@ def ordered_array_str(list_of_indices):
     return array_str
 
 
-def screen_species_conformers(species_index):
+def screen_species_conformers(species_index, force_rerun=False):
     """Sort through all the possible conformers and use a cheap calculator
     like Hotbit or xtb
 
@@ -294,14 +206,12 @@ def screen_species_conformers(species_index):
         return True
 
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
-    if get_species_status(species_index, 'screen_conformers'):
-        species_log(species_index, 'Conformers already screened')
-        return True
-
     conformer_dir = os.path.join(species_dir, 'conformers')
     os.makedirs(conformer_dir, exist_ok=True)
 
-    if os.path.exists(os.path.join(conformer_dir, 'conformer_0000.com')):
+    if force_rerun:
+        species_log(species_index, 'Forcing rerun of conformer screening')
+    elif os.path.exists(os.path.join(conformer_dir, 'conformer_0000.com')):
         species_log(species_index, 'Conformers already screened')
         return True
 
@@ -361,12 +271,11 @@ def screen_species_conformers(species_index):
         save_offset += len(spec.conformers[resonance_smiles])
 
     # write to the status file to indicate that the conformer screening is complete
-    set_species_status(species_index, 'screen_conformers', True)
     species_log(species_index, f'Conformer screening complete')
     return True
 
 
-def optimize_conformers(species_index):
+def optimize_conformers(species_index, force_rerun=False):
     """Optimize the conformers that were screened"""
     if arkane_species_complete(species_index):
         return True
@@ -376,12 +285,10 @@ def optimize_conformers(species_index):
     species_log(species_index, f'Starting conformer optimization job')
 
     # check if the run was already completed
-    if get_species_status(species_index, 'conformer_opt'):
+    if force_rerun:
+        species_log(species_index, f'Forcing rerun of species optimization')
+    elif conformers_done_optimizing(conformer_dir):
         species_log(species_index, f'Conformer optimization already ran')
-        return True
-    if conformers_done_optimizing(conformer_dir):
-        species_log(species_index, f'Conformer optimization already ran')
-        set_species_status(species_index, 'conformer_opt', True)
         return True
 
     n_conformers = min(len(glob.glob(os.path.join(conformer_dir, 'conformer_*.com'))), MAX_N_CONFORMERS)
@@ -511,7 +418,7 @@ def setup_single_point(index, calc_type='species', force_rerun=False, parallel=T
     input_format = """!{res}HF {level_of_theory} TightSCF tightPNO
 !energy
 
-%maxcore 10240
+%maxcore 7000
 {opt_parallel_line}
 
 * xyz {charge} {mult}
@@ -1111,9 +1018,8 @@ def conformers_done_optimizing(base_dir, completion_threshold=0.2, base_name='co
 def wait_for_conformer_opt(species_index):
     """Wait for the conformer optimization to finish"""
     # check if the run was already completed
-    if get_species_status(species_index, 'conformer_opt'):
-        species_log(species_index, f'Conformer optimization already ran')
-        return True
+    # TODO maybe delete this function since it isn't used anywhere else.
+    # Also, I trust grep more for checking file status than the arkane.ess.gaussian.GaussianLog
 
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
@@ -1123,7 +1029,6 @@ def wait_for_conformer_opt(species_index):
         opt_completed = conformers_done_optimizing(conformer_dir)
 
     # write to the status file to indicate that the conformer screening is complete
-    set_species_status(species_index, 'conformer_opt', True)
     species_log(species_index, f'Conformer optimization complete')
 
 
@@ -1132,6 +1037,7 @@ def arkane_species_complete(species_index):
     Expects to find the following directory structure:
     DFT_DIR/thermo/species_XXXX/arkane/RMG_libraries/thermo.py
     Returns True if complete, False otherwise
+    # TODO -- add check for your specific level of theory to be sure it's what you want
     """
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     arkane_result = os.path.join(species_dir, 'arkane', 'RMG_libraries', 'thermo.py')
@@ -1348,7 +1254,21 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
             conformer.get_molecules()
             conformer.get_geometries()
         for i, torsion in enumerate(conformer.torsions):
-            output += [get_rotor_info(conformer, torsion, i)]
+            # figure out whether the rotor file worked...
+            relaxed = True
+            rotor_logfile = os.path.join(arkane_dir, f'rotor_{i:04}.log')
+            rotor_scan_energies_file = os.path.join(arkane_dir, f'rotor_{i:04}_scan_energies.txt')
+            if os.path.exists(rotor_scan_energies_file):
+                if not os.path.exists(rotor_logfile):
+                    relaxed = False
+                else:
+                    # try reading in the logfile
+                    try:
+                        gl = arkane.ess.gaussian.GaussianLog(rotor_logfile)
+                    except arkane.exceptions.LogError:
+                        relaxed = False
+
+            output += [get_rotor_info(conformer, torsion, i, relaxed=relaxed)]
         output += ["]"]
 
     input_string = ""
@@ -1371,6 +1291,7 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
     rotor_dir = os.path.join(species_dir, 'rotors')
+    fixed_rotor_dir = os.path.join(species_dir, 'rigid_rotors')
     single_point_dir = os.path.join(species_dir, 'single_point')
     arkane_dir = os.path.join(species_dir, 'arkane')
     os.makedirs(arkane_dir, exist_ok=True)
@@ -1401,6 +1322,11 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
         rotor_files = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
         for rotor_file in rotor_files:
             shutil.copy(rotor_file, arkane_dir)
+
+        if os.path.exists(fixed_rotor_dir):
+            fixed_rotor_files = glob.glob(os.path.join(fixed_rotor_dir, 'rotor_*_scan_energies.txt'))
+            for fixed_rotor_file in fixed_rotor_files:
+                shutil.copy(fixed_rotor_file, arkane_dir)
 
     else:
         conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
@@ -1497,7 +1423,7 @@ def delete_double_spaces(gaussian_com_file):
             f.writelines(lines)
 
 
-def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, max_conformers=MAX_N_CONFORMERS):
+def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, max_conformers=MAX_N_CONFORMERS, force_rerun=False):
     """Function to set up the gaussian files for a particular opt type
     screens the conformers using hotbit, then writes the gaussian input files
     types are 'shell', 'center', 'overall', 'hfsp', 'hfsp_shell', 'hfsp_overall'
@@ -1521,13 +1447,6 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         os.makedirs(screen_dir, exist_ok=True)
     reaction_log(reaction_index, f'Starting {opt_type} opt job')
 
-    # TODO - I don't like this status system. (get_reaction_status) A status file is not the actual status and the extra layer makes things worse. Get rid of it
-    # check if the opt setup is already complete. But there should be some time-saving check before running autotst
-    if get_reaction_status(reaction_index, f'{opt_type}_setup') or \
-       get_reaction_status(reaction_index, f'{opt_type}_opt'):
-        reaction_log(reaction_index, f'{opt_type} opt setup complete')
-        return True
-
     opt_dir = os.path.join(reaction_dir, opt_type)
     os.makedirs(opt_dir, exist_ok=True)
 
@@ -1535,35 +1454,30 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
     if direction == 'reverse':
         opt_label = 'rev_ts_0000.log'
 
+    if force_rerun:
+        reaction_log(reaction_index, f'Forcing rerun of setup {opt_type}')
+    else:  # see if we've already done this
+        if os.path.exists(os.path.join(opt_dir, opt_label[:-4] + '.com')):
+            reaction_log(reaction_index, f'Already ran setup for {opt_type}. Quitting.')
+            return True
+
     # don't run center if shell isn't complete and
     # don't run overall if center isn't complete
     # don't run hfsp_overall if hfsp_shell isn't complete
     if opt_type == 'center':
         shell_dir = os.path.join(reaction_dir, 'shell')
-        if get_reaction_status(reaction_index, 'shell_opt'):
-            pass
-        elif conformers_done_optimizing(shell_dir, base_name=opt_label[:-8], completion_threshold=0.01):
-            set_reaction_status(reaction_index, 'shell_opt', True)
-        else:
-            reaction_log(reaction_index, f'Center opt setup incomplete, shell opt not complete')
+        if not conformers_done_optimizing(shell_dir, base_name=opt_label[:-8], completion_threshold=0.01):
+            reaction_log(reaction_index, f'Cannot set up center opt: shell opt not complete yet')
             return False
     elif opt_type == 'overall':
         center_dir = os.path.join(reaction_dir, 'center')
-        if get_reaction_status(reaction_index, 'center_opt'):
-            pass
-        elif conformers_done_optimizing(center_dir, base_name=opt_label[:-8]):
-            set_reaction_status(reaction_index, 'center_opt', True)
-        else:
-            reaction_log(reaction_index, f'Overall opt setup incomplete, center opt not complete')
+        if not conformers_done_optimizing(center_dir, base_name=opt_label[:-8]):
+            reaction_log(reaction_index, f'Cannot set up overall opt: center opt not complete yet')
             return False
     elif opt_type == 'hfsp_overall':
         hfsp_shell_dir = os.path.join(reaction_dir, 'hfsp_shell')
-        if get_reaction_status(reaction_index, 'hfsp_shell_opt'):
-            pass
-        elif conformers_done_optimizing(hfsp_shell_dir, base_name=opt_label[:-8]):
-            set_reaction_status(reaction_index, 'hfsp_shell_opt', True)
-        else:
-            reaction_log(reaction_index, f'Cannot run hfsp_overall opt setup because hfsp_shell opt not complete')
+        if not conformers_done_optimizing(hfsp_shell_dir, base_name=opt_label[:-8]):
+            reaction_log(reaction_index, f'Cannot set up hfsp_overall opt: hfsp_shell opt not complete yet')
             return False
 
     # ------------------ Use Hotbit to screen the conformers ------------------
@@ -1669,12 +1583,11 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
         delete_double_spaces(os.path.join(opt_dir, calc.label + '.com'))
 
     # write to the status file to indicate that the conformer screening is complete
-    set_reaction_status(reaction_index, f'{opt_type}_setup', True)
     reaction_log(reaction_index, f'{opt_type} setup complete')
     return True
 
 
-def run_opt(reaction_index, opt_type, direction='forward'):
+def run_opt(reaction_index, opt_type, direction='forward', force_rerun=False):
     """Run a shell, center, or overall optimization
     opt_type can be 'shell', 'center', or 'overall'
     and now, HFSP
@@ -1695,13 +1608,10 @@ def run_opt(reaction_index, opt_type, direction='forward'):
     if direction == 'reverse':
         opt_label = 'rev_ts_0000.log'
 
-    # check if the run was already completed
-    if get_reaction_status(reaction_index, f'{opt_type}_opt'):
-        reaction_log(reaction_index, f'{opt_type} optimization already ran')
-        return True
+    if force_rerun:
+        reaction_log(reaction_index, f'Forcing rerun of {opt_type} optimization run')
     elif conformers_done_optimizing(opt_dir, base_name=opt_label[:-8]):
         reaction_log(reaction_index, f'{opt_type} optimization already ran')
-        set_reaction_status(reaction_index, f'{opt_type}_opt', True)
         return True
 
     com_files = glob.glob(os.path.join(opt_dir, f'{opt_label[:-8]}*.com'))
@@ -1830,17 +1740,17 @@ def arkane_reaction_complete(reaction_index):
     return os.path.exists(os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'arkane', 'RMG_libraries', 'reactions.py'))
 
 
-def assemble_rotor_scan_energies(rigid_rotor_dir, rotor_index=None):
+def assemble_rotor_scan_energies(rotor_dir, rotor_index=None):
     if rotor_index is None:
-        rotor_index = get_rotor_index_from_path(rigid_rotor_dir)
+        rotor_index = get_rotor_index_from_path(rotor_dir)
     angles = np.linspace(0, 360, 21)
-    my_txt = os.path.join(rigid_rotor_dir, f'rotor_{rotor_index:04}_scan_energies.txt')
+    my_txt = os.path.join(rotor_dir, f'rotor_{rotor_index:04}_scan_energies.txt')
     lines = [
         'Angle (degrees)\t\tEnergy (kJ/mol)\n',
     ]
     energies = np.zeros(len(angles))
     for j in range(len(angles)):
-        rotor_file = os.path.join(rigid_rotor_dir, f'rotor_{rotor_index:04}_{j:04}.log')
+        rotor_file = os.path.join(rotor_dir, f'rotor_{rotor_index:04}_{j:04}.log')
         try:
             gl = arkane.ess.gaussian.GaussianLog(rotor_file)
         except (arkane.exceptions.LogError, FileNotFoundError):
@@ -1848,6 +1758,9 @@ def assemble_rotor_scan_energies(rigid_rotor_dir, rotor_index=None):
             continue
         energies[j] = gl.load_energy() / 1000.0
 
+    if sum(np.isnan(energies)) > 5:  # 16/21 success rate is maybe too low a threshold, but it's something
+        print(f'last rotorfile {rotor_file}')
+        raise ValueError(f'missing rotor TS scan energies for rotor {rotor_index}:04')
     # # rearrange...  # Do not do this. Changed the rotor scans so they start at the correct zero
     # angles = list(angles[:-1])  # get rid of the final calculation cause it's a repeat
     # energies = list(energies[:-1])
@@ -1910,25 +1823,14 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     # check if the arkane job was already completed
     if force_rerun:
         reaction_log(reaction_index, 'Forcing rerun of Arkane setup')
-    else:
-        if get_reaction_status(reaction_index, 'arkane_calc'):
-            reaction_log(reaction_index, 'Arkane job already ran')
-            return True
-        elif arkane_reaction_complete(reaction_index):
-            set_reaction_status(reaction_index, 'arkane_setup', True)
-            set_reaction_status(reaction_index, 'arkane_calc', True)
-            reaction_log(reaction_index, 'Arkane job already ran')
-            return True
-
-    # # Check for overall job status completion
-    # if not get_reaction_status(reaction_index, 'overall_opt'):
-    #    reaction_log(reaction_index, 'Cannot run arkane until overall job is complete')
-    #    return False
+    elif arkane_reaction_complete(reaction_index):
+        reaction_log(reaction_index, 'Arkane job already ran')
+        return True
 
     reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
     reaction_log(reaction_index, f'starting setup_arkane_reaction for reaction {reaction_index} {reaction_smiles}')
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
-    rigid_rotor_dir = os.path.join(reaction_dir, 'rigid_rotors')
+    rotor_dir = os.path.join(reaction_dir, 'rotors')
     overall_dir = os.path.join(reaction_dir, overall_dirname)
     arkane_dir = os.path.join(reaction_dir, 'arkane')
     arkane_ts_dir = os.path.join(arkane_dir, 'ts')
@@ -2085,9 +1987,9 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
             conformer.get_molecules()
             conformer.get_geometries()
         for i, torsion in enumerate(conformer.torsions):
-            rotor_file = os.path.join(rigid_rotor_dir, f'rotor_{i:04}_scan_energies.txt')
+            rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')
             if not os.path.exists(rotor_file):
-                assemble_rotor_scan_energies(rigid_rotor_dir, i)
+                assemble_rotor_scan_energies(rotor_dir, i)
 
             if force_rerun:
                 if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt')):
@@ -2114,7 +2016,6 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
 
     reaction_log(reaction_index, f'finished setting up arkane for reaction {reaction_index} {reaction_label}')
-    set_reaction_status(reaction_index, 'arkane_setup', True)
 
 
 def run_arkane_reaction(reaction_index, direction='forward', force_rerun=False):
@@ -2123,18 +2024,9 @@ def run_arkane_reaction(reaction_index, direction='forward', force_rerun=False):
     # check if the arkane job was already completed
     if force_rerun:
         reaction_log(reaction_index, 'Forcing rerun of arkane reaction run')
-    else:
-        if get_reaction_status(reaction_index, 'arkane_calc'):
-            reaction_log(reaction_index, 'Arkane job already ran')
-            return True
-        elif arkane_reaction_complete(reaction_index):
-            set_reaction_status(reaction_index, 'arkane_setup', True)
-            set_reaction_status(reaction_index, 'arkane_calc', True)
-            reaction_log(reaction_index, 'Arkane job already ran')
-            return True
-        elif not get_reaction_status(reaction_index, 'arkane_setup'):
-            reaction_log(reaction_index, 'Arkane job not set up.')
-            return False
+    elif arkane_reaction_complete(reaction_index):
+        reaction_log(reaction_index, 'Arkane job already ran')
+        return True
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     arkane_dir = os.path.join(reaction_dir, 'arkane')
