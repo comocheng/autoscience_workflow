@@ -1281,6 +1281,11 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
     return True
 
 
+def reaction_rotor_complete(reaction_index, rotor_index):
+    rotor_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'rotors', f'rotor_{rotor_index:04}_scan_energies.txt')
+    return os.path.exists(rotor_file) and not has_rotor_errors(rotor_file)
+
+
 def species_rotor_complete(species_index, rotor_index):
     rotor_file = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'rotors', f'rotor_{rotor_index:04}.log')
     if os.path.exists(rotor_file) and not has_rotor_errors(rotor_file):
