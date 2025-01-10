@@ -1281,6 +1281,37 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
     return True
 
 
+def species_rotor_complete(species_index, rotor_index):
+    rotor_file = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'rotors', f'rotor_{rotor_index:04}.log')
+    if os.path.exists(rotor_file) and not has_rotor_errors(rotor_file):
+        return True
+
+    fixed_rotor_file = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'rigid_rotors', f'rotor_{rotor_index:04}_scan_energies.txt')
+    return os.path.exists(fixed_rotor_file) and not has_rotor_errors(fixed_rotor_file)
+
+
+def has_rotor_errors(rotor_file):
+    # checks whether the rotor is going to cause problems in Arkane
+    # Returns False if error-free, True if you have to redo the rotor
+    if rotor_file.endswith('.log'):
+        try:
+            gl = arkane.ess.gaussian.GaussianLog(rotor_file)
+        except arkane.exceptions.LogError:
+            print(f'{rotor_file} has errors')
+            return True
+        energies, angles = gl.load_scan_energies()
+    else:
+        sl = arkane.statmech.ScanLog(rotor_file)
+        angles, energies = sl.load()
+
+    try:
+        arkane.statmech.determine_rotor_symmetry(energies, label='', pivots=[])
+    except rmgpy.exceptions.InputError:
+        print(f'{rotor_file} has peaks/valleys error')
+        return True
+    return False
+
+
 def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
     """Function to set up the Arkane species directory for a given species
     default is to not do rotors. But if rotors are specified, the arkane directory
@@ -1321,6 +1352,8 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
         # copy the rotor files
         rotor_files = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
         for rotor_file in rotor_files:
+            if has_rotor_errors(rotor_file):
+                species_log(species_index, f'Errors with rotor_file {rotor_file}')
             shutil.copy(rotor_file, arkane_dir)
 
         if os.path.exists(fixed_rotor_dir):
