@@ -16,9 +16,10 @@ def check_valid_ignition(P, time_index, threshold_ratio=1.5):
 def get_ignition_delays(times, pressures):
     """
     Returns the ignition delay time given an array of simulation times and pressures (unit agnostic)
-    Returns (first_ignition, second_ignition)
-    where second_ignition is -1 if it's not a two-stage ignition event
-    and first_ignition is -1 if no ignition is detected
+    For continuity, this returns (second_ignition, first_ignition)
+
+    where first_ignition is -1 if it's not a two-stage ignition event
+    and second_ignition is -1 if no ignition is detected
     """
 
     # Figure out when a valid ignition is detected
@@ -86,6 +87,6 @@ def get_ignition_delays(times, pressures):
     sampled_flat_level = np.median(sample_Ps)
     if sampled_flat_level / pressures[0] > 1.05:
         # This is a two-stage ignition delay
-        return times[first_ignition_index], times[second_ignition_index]
+        return times[second_ignition_index], times[first_ignition_index]
     
     return times[second_ignition_index], -1
