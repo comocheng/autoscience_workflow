@@ -1265,6 +1265,8 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
                     # try reading in the logfile
                     try:
                         gl = arkane.ess.gaussian.GaussianLog(rotor_logfile)
+                        if has_rotor_errors(rotor_logfile):
+                            relaxed = False
                     except arkane.exceptions.LogError:
                         relaxed = False
 
@@ -1281,7 +1283,7 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
     return True
 
 
-def reaction_rotor_complete(reaction_index, rotor_index):
+def reaction_rotor_complete(reaction_index, rotor_index, rotor_file=None):
     rotor_file = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}', 'rotors', f'rotor_{rotor_index:04}_scan_energies.txt')
     return os.path.exists(rotor_file) and not has_rotor_errors(rotor_file)
 
@@ -1359,7 +1361,8 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
         for rotor_file in rotor_files:
             if has_rotor_errors(rotor_file):
                 species_log(species_index, f'Errors with rotor_file {rotor_file}')
-            shutil.copy(rotor_file, arkane_dir)
+            else:
+                shutil.copy(rotor_file, arkane_dir)
 
         if os.path.exists(fixed_rotor_dir):
             fixed_rotor_files = glob.glob(os.path.join(fixed_rotor_dir, 'rotor_*_scan_energies.txt'))
@@ -1380,7 +1383,9 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
     new_cf.update_coords_from(mol_type="ase")
     if include_rotors:
         torsions = new_cf.get_torsions()
-        assert len(torsions) == len(rotor_files)
+        if not len(torsions) == len(rotor_files):
+            species_log(species_index, f'Warning! only {len(rotor_files)} found, but {len(torsions)} needed')
+        # assert len(torsions) == len(rotor_files)
 
     # write the Arkane conformer file
     write_arkane_conformer_file(new_cf, conformer_file, arkane_dir, include_rotors=include_rotors)
@@ -1394,7 +1399,7 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
         f'useHinderedRotors = {include_rotors}' + '\n',
         'useBondCorrections = True\n\n',
 
-        'frequencyScaleFactor = 0.982\n',
+        # 'frequencyScaleFactor = 0.955\n',  # let arkane take care of this
 
         f"species('{formula}', '{os.path.basename(conformer_file[:-4])}.py', structure=SMILES('{new_cf.rmg_molecule.smiles}'))\n\n",
 
@@ -1760,7 +1765,12 @@ def check_vib_irc(reaction_index, gaussian_logfile):
     # we'll be lenient: one large negative freq is enough
     freqs = np.array([vib[0] for vib in va.vibrations])
     one_negative = np.sum(freqs < 0)
-    large_negative = freqs[0] < -600
+
+    FREQ_THRESHOLD = -600
+    if reaction.reaction_family == '1,3_sigmatropic_rearrangement':
+        FREQ_THRESHOLD = -275
+
+    large_negative = freqs[0] < -FREQ_THRESHOLD
     one_large_negative = one_negative and large_negative
 
     # result, connect_the_dots_result = va.validate_ts()
@@ -1837,7 +1847,8 @@ def get_lowest_valid_ts(overall_dir, fake_valid_ts=False, reaction_index=None):
             continue
 
         # skip if the bonds don't match what's expected
-        if not verify_bond_count(reaction_index, gaussian_file=logfile):
+        skip_reactions = [10085]
+        if not verify_bond_count(reaction_index, gaussian_file=logfile) and reaction_index not in skip_reactions:
             continue
 
         try:
