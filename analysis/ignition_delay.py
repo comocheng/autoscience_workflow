@@ -16,11 +16,19 @@ def check_valid_ignition(P, time_index, threshold_ratio=1.5):
 def get_ignition_delays(times, pressures):
     """
     Returns the ignition delay time given an array of simulation times and pressures (unit agnostic)
-    For continuity, this returns (second_ignition, first_ignition)
+    For continuity, this returns (second_ignition, first_ignition, max_pressure_rise_time, valid_ignition)
 
     where first_ignition is -1 if it's not a two-stage ignition event
     and second_ignition is -1 if no ignition is detected
+    and the third value is the time of maximum pressure increase
+    valid_ignition is True if a the maximum ratio of pressure increase is at least 1.5
     """
+
+    slopes = np.gradient(pressures, times)
+    delay_i = np.argmax(slopes)
+    max_pressure_rise_time = times[delay_i]
+
+    valid_ignition = check_valid_ignition(pressures, len(times) - 1)
 
     # Figure out when a valid ignition is detected
     switch_index = -1
@@ -50,12 +58,7 @@ def get_ignition_delays(times, pressures):
         time_index = list(totals).index(vote_count)
         top_n_indices.append(time_index)
 
-    
     second_ignition_index = max(top_n_indices)
-    valid_ignition = check_valid_ignition(pressures, second_ignition_index) or np.isclose(times[second_ignition_index], times[switch_index], rtol=0.05)
-    if not valid_ignition:  # no valid ignition detected
-        return -1, -1
-
 
     # get the first ignition time, which should be the second latest ignition time in the top voted
     first_ignition_index = sorted(top_n_indices)[-2]
@@ -77,7 +80,7 @@ def get_ignition_delays(times, pressures):
 
     if first_entrance == -1 or first_exit == -1:
         print('could not zoom in on 1st iginition delay')
-        return second_ignition_index, -1
+        return second_ignition_index, -1, max_pressure_rise_time, valid_ignition
 
 
     # look at the region between the first and second ignition and see if it's higher than the starting pressure
@@ -87,6 +90,6 @@ def get_ignition_delays(times, pressures):
     sampled_flat_level = np.median(sample_Ps)
     if sampled_flat_level / pressures[0] > 1.05:
         # This is a two-stage ignition delay
-        return times[second_ignition_index], times[first_ignition_index]
+        return times[second_ignition_index], times[first_ignition_index], max_pressure_rise_time, valid_ignition
     
-    return times[second_ignition_index], -1
+    return times[second_ignition_index], -1, max_pressure_rise_time, valid_ignition
