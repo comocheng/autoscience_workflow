@@ -1808,6 +1808,7 @@ def assemble_rotor_scan_energies(rotor_dir, rotor_index=None):
 
     if sum(np.isnan(energies)) > 5:  # 16/21 success rate is maybe too low a threshold, but it's something
         print(f'last rotorfile {rotor_file}')
+        print(f'missing rotor TS scan energies for rotor {rotor_index}:04')
         raise ValueError(f'missing rotor TS scan energies for rotor {rotor_index}:04')
     # # rearrange...  # Do not do this. Changed the rotor scans so they start at the correct zero
     # angles = list(angles[:-1])  # get rid of the final calculation cause it's a repeat
@@ -2027,8 +2028,9 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     # add the rotors...
     conformer = reaction.ts[direction][0]
     torsions = conformer.get_torsions()
-    n_rotors = len(torsions)
-
+    n_rotors = len(reaction.ts[direction][0].torsions)
+    # n_rotors = len(torsions)
+    reaction_log(reaction_index, f'{n_rotors} rotors to include')
     if n_rotors > 0:
         reaction_log(reaction_index, 'writing hindered rotors')
         ts_lines.append("rotors = [\n")
@@ -2038,6 +2040,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         for i, torsion in enumerate(conformer.torsions):
             rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')
             if not os.path.exists(rotor_file):
+                reaction_log(reaction_index, f'cannot file rotor file {rotor_file}')
                 assemble_rotor_scan_energies(rotor_dir, i)
 
             if force_rerun:
@@ -2414,7 +2417,7 @@ def get_HFSP_TS_guess(reaction, d14, d24, conformer_index):
     return opt.atoms
 
 
-def verify_bond_count(reaction_index, gaussian_file=None):
+def verify_bond_count(reaction_index, gaussian_file=None, verbose=False):
     # function to count the number of each kind of bond to compare RMG's description to the optimized result coming out of Gaussian
     reaction_log(reaction_index, f'Verifying bond counts for reaction {reaction_index}')
 
@@ -2458,12 +2461,15 @@ def verify_bond_count(reaction_index, gaussian_file=None):
     ]
 
     for b in range(len(bond_types)):
-        reaction_log(reaction_index, f'Comparing {bond_types[b][0]}-{bond_types[b][1]} bonds:')
+        if verbose:
+            reaction_log(reaction_index, f'Comparing {bond_types[b][0]}-{bond_types[b][1]} bonds:')
         gaussian_bonds = analysis.get_bonds(bond_types[b][0], bond_types[b][1], unique=True)
-        reaction_log(reaction_index, gaussian_bonds[0])
+        if verbose:
+            reaction_log(reaction_index, gaussian_bonds[0])
 
         rmg_bonds = get_type_bonds(bond_types[b], reaction.ts['forward'][0])
-        reaction_log(reaction_index, rmg_bonds)
+        if verbose:
+            reaction_log(reaction_index, rmg_bonds)
 
         if len(rmg_bonds) != len(gaussian_bonds[0]):
             reaction_log(reaction_index, 'WARNING: RMG and ASE disagree with number of bonds')
