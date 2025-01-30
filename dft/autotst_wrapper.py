@@ -193,6 +193,180 @@ def ordered_array_str(list_of_indices):
     return array_str
 
 
+# ase manipulation helpers
+def get_atom_hash_str(molecule, index, analysis=None):
+    # returns a string of the atom element and bond info:
+    atom_type = '_'
+    O_bonds = 0
+    C_bonds = 0
+    H_bonds = 0
+    if type(molecule) == ase.atoms.Atoms:
+        atom_type = molecule[index].symbol
+        for b in analysis.all_bonds[0][index]:
+            if molecule[b].symbol == 'O':  # can make this fancier with Os, Od, Ot etc.
+                O_bonds += 1
+            elif molecule[b].symbol == 'C':
+                C_bonds += 1
+            elif molecule[b].symbol == 'H':
+                H_bonds += 1
+            else:
+                raise NotImplementedError
+    else:  # RMG type
+        atom_type = molecule.atoms[index].symbol
+        bond_dict = molecule.get_bonds(molecule.atoms[index])
+        for key in bond_dict.keys():
+            if key.symbol == 'O':
+                O_bonds += 1
+            elif key.symbol == 'C':
+                C_bonds += 1
+            elif key.symbol == 'H':
+                H_bonds += 1
+            else:
+                raise NotImplementedError
+    bond_str = f'{atom_type}_{O_bonds}O-{C_bonds}C-{H_bonds}H'
+    return bond_str
+
+
+def reorder_atoms(rmg_molecule, atoms, species_index=None, verbose=False):
+    # change the ase order of atoms to match the RMG molecule order
+    # returns new atoms object
+    def center_counts_match(ase_centers, RMG_centers):
+        for CENTER_SIZE in [1, 2, 3, 4]:
+            RMG_count = 0
+            ase_count = 0
+            for key in RMG_centers.keys():
+                if len(RMG_centers[key]) == CENTER_SIZE:
+                    RMG_count += 1
+            for key in ase_centers.keys():
+                if len(ase_centers[key]) == CENTER_SIZE:
+                    ase_count += 1
+            if RMG_count != ase_count:
+                return False
+        return True
+
+    analysis = ase.geometry.analysis.Analysis(atoms)
+
+    # a list of possible matches for each index
+    matches = []
+    for i in range(len(rmg_molecule.atoms)):
+        ref_str = get_atom_hash_str(rmg_molecule, i)
+        atom_matches = []
+        for j in range(len(atoms)):
+            check_str = get_atom_hash_str(atoms, j, analysis=analysis)
+            if check_str == ref_str:
+                atom_matches.append(j)
+        if not atom_matches:
+            print('No matches found for atoms object')
+            return False
+        matches.append(atom_matches)
+        if verbose:
+            print(atom_matches)
+
+    # ignore hydrogrens to count up permutations
+    permutation_count = 1
+    for i in range(len(matches)):
+        if rmg_molecule.atoms[i].symbol == 'H' and len(matches[i]) > 1:
+            continue
+        permutation_count *= len(matches[i])
+    if verbose:
+        print(permutation_count, 'permutations (not counting H)')
+
+    # enumerate the possibilities excluding Hydrogens
+    possibilities = []
+
+    # spit out possibilities
+    for p in range(permutation_count):
+        divisor = permutation_count - p
+        order = []
+        combo_repeats = False
+        for i in range(len(rmg_molecule.atoms)):
+            if rmg_molecule.atoms[i].symbol == 'H' and len(matches[i]) > 1:
+                order.append(-1)
+                continue
+
+            match_index = int(divisor % len(matches[i]))
+            if matches[i][match_index] in order:
+                combo_repeats = True
+                break
+            order.append(matches[i][match_index])
+            divisor /= len(matches[i])
+        if not combo_repeats:
+            possibilities.append(order)
+            if verbose:
+                print(order)
+
+    # Now deal with H possibilities
+    H_slots = []
+    for i in range(len(possibilities[0])):
+        if possibilities[0][i] < 0:
+            H_slots.append(i)
+
+    # for a given possibility, assign possible H's
+    for possibility in possibilities:
+        impossible = False
+        missing_ase_indices = []
+        for i in range(len(possibility)):
+            if i not in possibility:
+                missing_ase_indices.append(i)
+        assert len(missing_ase_indices) == len(H_slots)
+
+        # Group hydrogens by common center atoms in RMG molecule
+        centers = {}
+        for i in range(len(H_slots)):
+            # get the atom the RMG H is bonded to
+            H_atom = rmg_molecule.atoms[H_slots[i]]
+            center = [k for k in rmg_molecule.get_bonds(H_atom).keys()][0]
+            center_index = rmg_molecule.atoms.index(center)
+            if center_index not in centers.keys():
+                centers[center_index] = [rmg_molecule.atoms.index(H_atom)]
+            else:
+                centers[center_index].append(rmg_molecule.atoms.index(H_atom))
+
+        # Group hydrogens by common center atoms in ase atoms object
+        ase_centers = {}
+        for i in missing_ase_indices:
+            assert len(analysis.all_bonds[0][i]) == 1
+            center_index = analysis.all_bonds[0][i][0]
+            if center_index not in ase_centers.keys():
+                ase_centers[center_index] = [i]
+            else:
+                ase_centers[center_index].append(i)
+
+        # check that RMG and ase center counts match
+        if len(centers) != len(ase_centers) or not center_counts_match(ase_centers, centers):
+            break
+
+        for CENTER_SIZE in [1, 2, 3, 4]:
+            # try to assign the centers with 1 Hydrogen
+            for RMG_center_index in centers.keys():
+                if len(centers[RMG_center_index]) != CENTER_SIZE:
+                    continue
+                ase_center_index = possibility[RMG_center_index]
+                if len(ase_centers[ase_center_index]) != CENTER_SIZE or \
+                        possibility[centers[RMG_center_index][0]] != -1:  # and we must not overwrite an existing assignment
+                    impossible = True
+                    break
+                for j in range(CENTER_SIZE):
+                    possibility[centers[RMG_center_index][j]] = ase_centers[ase_center_index][j]
+            if impossible:
+                break
+        if impossible:
+            break
+
+        # make a new copy of atoms with the possible order:
+        new_atoms = atoms[possibility[0]:possibility[0] + 1]
+        for i in range(1, len(possibility)):
+            new_atoms = new_atoms + atoms[possibility[i]:possibility[i] + 1]
+
+        if not species_index:
+            species_index = database_fun.get_unique_species_index(rmg_molecule)
+        if bonds_too_large(None, species_index, calc_type='species', atoms=new_atoms):
+            break
+        else:
+            return new_atoms
+    return False
+
+
 def screen_species_conformers(species_index, force_rerun=False):
     """Sort through all the possible conformers and use a cheap calculator
     like Hotbit or xtb
@@ -1138,14 +1312,15 @@ def get_lowest_energy_gaussian_file(base_dir, blacklist=[]):
     return lowest_file
 
 
-def bonds_too_large(conformer_file, index, calc_type='species'):
+def bonds_too_large(conformer_file, index, calc_type='species', atoms=None):
     """Function to check whether the bonds are too big to make sense for a given species"""
     assert calc_type in ['species', 'reaction']
     if calc_type == 'reaction':
         raise NotImplementedError("This doesn't work yet for TS objects, I think the RMG numbering isn't matching up with the loaded ase indices")
 
-    with open(conformer_file, 'r') as f:
-        atoms = ase.io.gaussian.read_gaussian_out(f)
+    if not atoms:
+        with open(conformer_file, 'r') as f:
+            atoms = ase.io.gaussian.read_gaussian_out(f)
 
     # make a conformer object again
     if calc_type == 'species':
