@@ -194,6 +194,16 @@ def ordered_array_str(list_of_indices):
 
 
 # ase manipulation helpers
+def wrong_atom_order(rmg_molecule, ase_atoms):
+    # function to detect obvious mismatch in order of RMG atoms and ase atoms
+    if len(rmg_molecule.atoms) != len(ase_atoms):
+        return True
+    for i in range(len(rmg_molecule.atoms)):
+        if rmg_species.molecule[0].atoms[i].symbol != atoms[i].symbol:
+            return True
+    return False
+
+
 def get_atom_hash_str(molecule, index, analysis=None):
     # returns a string of the atom element and bond info:
     atom_type = '_'
@@ -361,7 +371,7 @@ def reorder_atoms(rmg_molecule, atoms, species_index=None, verbose=False):
         if not species_index:
             species_index = database_fun.get_unique_species_index(rmg_molecule)
         if bonds_too_large(None, species_index, calc_type='species', atoms=new_atoms):
-            break
+            continue
         else:
             return new_atoms
     return False
@@ -850,6 +860,9 @@ def setup_rotors(species_index, increment_deg=20):
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
 
+    # check first whether we have to reorder the atoms
+    # if wrong_atom_order()
+
     conformer_file = get_lowest_valid_conformer(conformer_dir, species_index)
 
     new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
@@ -1269,9 +1282,19 @@ def get_lowest_valid_conformer(conformer_dir, index=None, calc_type='species'):
                 reaction_log(index, f'Conformer blacklist is {conformer_blacklist}')
 
         if bonds_too_large(conformer_file, index, calc_type=calc_type):
-            conformer_blacklist.append(conformer_file)
+            # try reordering
             if calc_type == 'species':
-                species_log(index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
+                species_log(index, f'Bonds too large for conformer, trying reorder...')
+                new_cf = autotst.species.Conformer(smiles=database_fun.index2species(index).smiles)
+                with open(conformer_file, 'r') as f:
+                    atoms = ase.io.gaussian.read_gaussian_out(f)
+                new_atoms = reorder_atoms(new_cf.rmg_molecule, atoms)
+                if new_atoms:
+                    # actually it is a valid conformer
+                    valid_conformer = True
+                else:
+                    conformer_blacklist.append(conformer_file)
+                    species_log(index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
             elif calc_type == 'reaction':
                 reaction_log(index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
         else:
