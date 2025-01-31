@@ -860,20 +860,22 @@ def setup_rotors(species_index, increment_deg=20):
     rmg_species = database_fun.index2species(species_index)
     species_smiles = rmg_species.smiles
 
-    # check first whether we have to reorder the atoms
-    # if wrong_atom_order()
-
     conformer_file = get_lowest_valid_conformer(conformer_dir, species_index)
-
     new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
     shutil.copy(conformer_file, new_conformer_loc)
 
-    # get the rotors
-    with open(new_conformer_loc, 'r') as f:
-        atoms = ase.io.gaussian.read_gaussian_out(f)
-
     # make a conformer object again
     new_cf = autotst.species.Conformer(smiles=species_smiles)  # TODO make this from adjacency list?
+
+    # fill in the atom coordinates
+    with open(new_conformer_loc, 'r') as f:
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+        if bonds_too_large(None, species_index, atoms=atoms):
+            # try reordering
+            atoms = reorder_atoms(new_cf.rmg_molecule, atoms)
+            if not atoms:
+                species_log(species_index, 'Could not reorder the atoms')
+
     new_cf._ase_molecule = atoms
     new_cf.update_coords_from(mol_type="ase")
     torsions = new_cf.get_torsions()  # TODO - is this only the nonterminal ones?
@@ -881,7 +883,6 @@ def setup_rotors(species_index, increment_deg=20):
 
     # TODO verify atom labeling produces correct torsion calculations
     # we need to verify that this gets the atom labeling correct, or else revert to the commented out section above
-
     if n_rotors == 0:
         no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
         with open(no_rotor_file, 'w') as f:
