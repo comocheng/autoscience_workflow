@@ -13,7 +13,6 @@ import job_manager
 import arkane
 import arkane.ess.gaussian  # does a lot better at reading gaussian files than ase
 import arkane.ess.orca
-
 import cclib.io
 
 import rmgpy.species
@@ -193,6 +192,24 @@ def ordered_array_str(list_of_indices):
     return array_str
 
 
+def check_hessian_cartesian_consistent(gaussian_file):
+    # quick check that the coordinates are consistent between the geometry and the Hessian
+    # returns True if consistent
+    gl = arkane.ess.gaussian.GaussianLog(gaussian_file)
+    conformer, unscaled_freq = gl.load_conformer()
+    coordinates, number, mass = gl.load_geometry()
+    conformer.coordinates = (coordinates, "angstroms")
+    conformer.number = number
+    conformer.mass = (mass, "amu")
+    linear = None
+    is_ts = False
+    hessian = gl.load_force_constant_matrix()
+
+    rotors = []
+    new_freqs = arkane.statmech.project_rotors(conformer, hessian, rotors, linear, is_ts)
+    return np.all(np.isclose(new_freqs, unscaled_freq, 0.1))
+
+
 # ase manipulation helpers
 def wrong_atom_order(rmg_molecule, ase_atoms):
     # function to detect obvious mismatch in order of RMG atoms and ase atoms
@@ -237,7 +254,17 @@ def get_atom_hash_str(molecule, index, analysis=None):
     return bond_str
 
 
-def reorder_atoms(rmg_molecule, atoms, species_index=None, verbose=False):
+def reorder_atoms(rmg_molecule, atoms, index=None, calc_type='species', verbose=False, debug=False, CUT_FIRST=False):
+    if not debug:
+        raise NotImplementedError  # don't use this in normal operation!
+
+    if calc_type == 'reaction':
+        assert index, 'Must provide reaction index'
+
+        # if it's a reaction, maybe add extra bonds for the TS analysis?
+
+    # TODO grab reaction index from database using isomorphic check?
+
     # change the ase order of atoms to match the RMG molecule order
     # returns new atoms object
     def center_counts_match(ase_centers, RMG_centers):
@@ -255,6 +282,19 @@ def reorder_atoms(rmg_molecule, atoms, species_index=None, verbose=False):
         return True
 
     analysis = ase.geometry.analysis.Analysis(atoms)
+    # see if any H's have two bonds
+    for i in range(len(atoms)):
+        if atoms[i].symbol == 'H' and len(analysis.all_bonds[0][i]) > 1:
+            if len(analysis.all_bonds[0][i]) > 2:  # H has more than 2 bonds
+                raise NotImplementedError
+            if verbose:
+                print(f'This H has {len(analysis.all_bonds[0][i])} bonds: {i}')
+            if CUT_FIRST:
+                analysis.all_bonds[0][analysis.all_bonds[0][i][0]].remove(i)
+                analysis.all_bonds[0][i] = [analysis.all_bonds[0][i][1]]
+            else:
+                analysis.all_bonds[0][analysis.all_bonds[0][i][1]].remove(i)
+                analysis.all_bonds[0][i] = [analysis.all_bonds[0][i][0]]
 
     # a list of possible matches for each index
     matches = []
@@ -271,6 +311,30 @@ def reorder_atoms(rmg_molecule, atoms, species_index=None, verbose=False):
         matches.append(atom_matches)
         if verbose:
             print(atom_matches)
+
+
+    # # if one thing is listed twice and another isn't listed anywhere, try substituting one for the other
+    # set_of_possible = set([j for i in matches for j in i])
+    # set_of_all = set([a for a in range(len(atoms))])
+    # set_of_missing = set_of_all - set_of_possible
+    # print(f'possible {set_of_possible}')
+    # print(f'all {set_of_all}')
+    # print(f'missing {set_of_missing}')
+
+    # print()
+    # already_appeared_once = []
+    # if len(set_of_missing) == 1:
+    #     for i in range(len(matches)):
+    #         if len(matches[i]) == 1 and matches[i][0] not in already_appeared_once:
+    #             already_appeared_once.append(matches[i][0])
+    #         elif len(matches[i]) == 1 and matches[i][0] in already_appeared_once:
+    #             matches[i] = list(set_of_missing)
+    #             print(f'changing {i} to be {list(set_of_missing)}')
+    #             break
+    # if verbose:
+    #     print()
+    #     for i in range(len(matches)):
+    #         print(matches[i])
 
     # ignore hydrogrens to count up permutations
     permutation_count = 1
@@ -368,9 +432,10 @@ def reorder_atoms(rmg_molecule, atoms, species_index=None, verbose=False):
         for i in range(1, len(possibility)):
             new_atoms = new_atoms + atoms[possibility[i]:possibility[i] + 1]
 
-        if not species_index:
-            species_index = database_fun.get_unique_species_index(rmg_molecule)
-        if bonds_too_large(None, species_index, calc_type='species', atoms=new_atoms):
+        if not index:
+            if calc_type == 'species':
+                index = database_fun.get_unique_species_index(rmg_molecule)
+        if bonds_too_large(None, index, calc_type=calc_type, atoms=new_atoms):
             continue
         else:
             return new_atoms
@@ -1339,9 +1404,7 @@ def get_lowest_energy_gaussian_file(base_dir, blacklist=[]):
 def bonds_too_large(conformer_file, index, calc_type='species', atoms=None):
     """Function to check whether the bonds are too big to make sense for a given species"""
     assert calc_type in ['species', 'reaction']
-    if calc_type == 'reaction':
-        raise NotImplementedError("This doesn't work yet for TS objects, I think the RMG numbering isn't matching up with the loaded ase indices")
-
+    too_large = False
     if not atoms:
         with open(conformer_file, 'r') as f:
             atoms = ase.io.gaussian.read_gaussian_out(f)
@@ -1375,9 +1438,9 @@ def bonds_too_large(conformer_file, index, calc_type='species', atoms=None):
 
         if new_cf._ase_molecule.get_distances(*bond.atom_indices)[0] > threshold:
             print(bondtype, new_cf._ase_molecule.get_distances(*bond.atom_indices)[0])
-            return True
+            too_large = True
 
-    return False
+    return too_large
 
 
 def get_rotor_info(conformer, torsion, torsion_index, relaxed=True):
@@ -1404,27 +1467,53 @@ def get_rotor_info(conformer, torsion, torsion_index, relaxed=True):
     return info
 
 
+def get_pivots_tops(conformer, torsion, torsion_index, relaxed=True):
+    # relaxed = True for relaxed rotor scans vs. fixed rotor scans with no optimization
+    _, j, k, _ = torsion.atom_indices
+
+    # Adjusted since mol's IDs start from 0 while Arkane's start from 1
+    pivots = [j + 1, k + 1]
+
+    top_IDs = []
+    for num, tf in enumerate(torsion.mask):
+        if tf:
+            top_IDs.append(num)
+
+    # Adjusted to start from 1 instead of 0
+    tops = [ID + 1 for ID in top_IDs]
+    return pivots, tops
+
+
 def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors=True):
     # assume rotor and conformer logs have already been copied into the arkane directory
     species_name = os.path.basename(gauss_log[:-4])
-    parser = cclib.io.ccread(gauss_log)
-    symbol_dict = {
-        35: "Br",
-        17: "Cl",
-        9: "F",
-        8: "O",
-        7: "N",
-        6: "C",
-        1: "H",
-        18: "Ar",
-        2: "He",
-        10: "Ne",
-    }
+    # parser = cclib.io.ccread(gauss_log)
+    # symbol_dict = {
+    #     35: "Br",
+    #     17: "Cl",
+    #     9: "F",
+    #     8: "O",
+    #     7: "N",
+    #     6: "C",
+    #     1: "H",
+    #     18: "Ar",
+    #     2: "He",
+    #     10: "Ne",
+    # }
 
-    atoms = []
+    # atoms = []
 
-    for atom_num, coords in zip(parser.atomnos, parser.atomcoords[-1]):
-        atoms.append(ase.Atom(symbol=symbol_dict[atom_num], position=coords))
+    # for atom_num, coords in zip(parser.atomnos, parser.atomcoords[-1]):
+    #     atoms.append(ase.Atom(symbol=symbol_dict[atom_num], position=coords))
+
+    with open(gauss_log, 'r') as f:
+        atoms = ase.io.gaussian.read_gaussian_out(f)
+        species_index = get_species_index_from_path(arkane_dir)
+        if bonds_too_large(None, species_index, atoms=atoms):
+            # try reordering
+            atoms = reorder_atoms(conformer.rmg_molecule, atoms)
+            if not atoms:
+                species_log(species_index, 'Could not reorder the atoms')
 
     conformer._ase_molecule = ase.Atoms(atoms)
     conformer.update_coords_from("ase")
@@ -1522,8 +1611,6 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
     """Function to set up the Arkane species directory for a given species
     default is to not do rotors. But if rotors are specified, the arkane directory
     will be arkane_rotors
-
-    TODO add force recalc option to rerun calculation from scratch
     """
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
@@ -1577,6 +1664,11 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
 
     with open(conformer_file, 'r') as f:
         atoms = ase.io.gaussian.read_gaussian_out(f)
+        if bonds_too_large(None, species_index, atoms=atoms):
+            # try reordering
+            atoms = reorder_atoms(new_cf.rmg_molecule, atoms)
+            if not atoms:
+                species_log(species_index, 'Could not reorder the atoms')
 
     new_cf._ase_molecule = atoms
     new_cf.update_coords_from(mol_type="ase")
@@ -2200,6 +2292,13 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         if os.path.exists(os.path.join(arkane_ts_dir, os.path.basename(TS_log))):
             os.remove(os.path.join(arkane_ts_dir, os.path.basename(TS_log)))
     shutil.copy(TS_log, arkane_ts_dir)
+
+    #########  TEMPORARY BUG FIX -- this should not be a permanent part of the workflow ########
+    iop_bugfix_log = os.path.join(rotor_dir, 'iop_recalc.log')
+    if os.path.exists(iop_bugfix_log):
+        # this is the real TS geometry/frequency log and we should use this instead of the TS_log
+        reaction_log(f'Copying iop 2/9 bugfix logfile to replace old TS geo/freq logfile')
+        shutil.copyfile(iop_bugfix_log, os.path.join(arkane_ts_dir, os.path.basename(TS_log)))
 
     lines.append(f'transitionState("{TS_name}", "{TS_file}")\n')
 
