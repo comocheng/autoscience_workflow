@@ -257,3 +257,11 @@ def find_reverses(reaction_index_list):
             reverses[my_index] = None
 
     return reverses
+
+
+def get_reactants_and_products(reaction):
+    reaction_string = get_unique_string(reaction)
+    tokens = reaction_string.split('=')
+    reactants = [index2species(int(i)) for i in tokens[0].split('+')]
+    products = [index2species(int(i)) for i in tokens[-1].split('+')]
+    return reactants, products

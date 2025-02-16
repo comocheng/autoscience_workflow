@@ -2184,10 +2184,6 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     # TODO shouldn't rely on the dictionary. Use the species number in the database
 
     def get_sp_name(smiles):
-        # if smiles == '[CH2]C=CC':  # manually change to resonance structures included in model
-        #     smiles = 'C=C[CH]C'
-        # elif smiles == '[CH2][CH]C=C':
-        #     smiles = '[CH2]C=C[CH2]'
         for entry in species_dict.keys():
             if species_dict[entry].smiles == smiles:
                 return str(species_dict[entry])
@@ -2197,12 +2193,13 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
 
     def get_reaction_label(rmg_reaction):
         label = ''
-        for reactant in rmg_reaction.reactants:
-            label += get_sp_name(reactant.smiles) + ' + '
+        reactants, products = database_fun.get_reactants_and_products(rmg_reaction)
+        for sp in reactants:
+            label += get_sp_name(sp.smiles) + ' + '
         label = label[:-2]
         label += '<=> '
-        for product in rmg_reaction.products:
-            label += get_sp_name(product.smiles) + ' + '
+        for sp in products:
+            label += get_sp_name(sp.smiles) + ' + '
         label = label[:-3]
         return label
 
@@ -2229,25 +2226,21 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     ]
 
     completed_species = []
-    for reactant in reaction.rmg_reaction.reactants + reaction.rmg_reaction.products:
+    reactants, products = database_fun.get_reactants_and_products(rmg_reaction)
+    for reactant in reactants + products:
+        species_index = database_fun.get_unique_species_index(reactant)
+        reaction_log(reaction_index, f'{reactant}')
+
         # check for duplicates
         duplicate = False
         for sp in completed_species:
             if reactant.is_isomorphic(sp):
                 duplicate = True
         if duplicate:
+            reaction_log(reaction_index, f'{species_index} is a duplicate')
             continue
 
-        reaction_log(reaction_index, f'{reactant}')
-        species_index = database_fun.get_unique_species_index(reactant)
         species_smiles = reactant.smiles
-
-        # TODO add all resonance structures to the model separately
-
-        # if species_smiles == '[CH2]C=CC':  # TODO clean up this fix where we manually switch back to other resonance structure
-        #     species_smiles = 'C=C[CH]C'
-        # elif species_smiles == '[CH2][CH]C=C':
-        #     species_smiles = '[CH2]C=C[CH2]'
         species_name = get_sp_name(species_smiles)
         species_arkane_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'arkane')
         try:
@@ -2297,18 +2290,18 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     iop_bugfix_log = os.path.join(rotor_dir, 'iop_recalc.log')
     if os.path.exists(iop_bugfix_log):
         # this is the real TS geometry/frequency log and we should use this instead of the TS_log
-        reaction_log(f'Copying iop 2/9 bugfix logfile to replace old TS geo/freq logfile')
+        reaction_log(reaction_index, f'Copying iop 2/9 bugfix logfile to replace old TS geo/freq logfile')
         shutil.copyfile(iop_bugfix_log, os.path.join(arkane_ts_dir, os.path.basename(TS_log)))
 
     lines.append(f'transitionState("{TS_name}", "{TS_file}")\n')
 
     reaction_label = get_reaction_label(reaction.rmg_reaction)
-    reactants = [get_sp_name(reactant.smiles) for reactant in reaction.rmg_reaction.reactants]
-    products = [get_sp_name(product.smiles) for product in reaction.rmg_reaction.products]
+    reactants_label = [get_sp_name(reactant.smiles) for reactant in reactants]
+    products_label = [get_sp_name(product.smiles) for product in products]
     lines.append(f'reaction(\n')
     lines.append(f'    label = "{reaction_label}",\n')
-    lines.append(f'    reactants = {reactants},\n')
-    lines.append(f'    products = {products},\n')
+    lines.append(f'    reactants = {reactants_label},\n')
+    lines.append(f'    products = {products_label},\n')
     lines.append(f'    transitionState = "{TS_name}",\n')
     lines.append(f'#    tunneling = "Eckart",\n')
     lines.append(f')\n\n')
