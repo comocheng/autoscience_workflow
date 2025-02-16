@@ -1309,16 +1309,24 @@ def get_gaussian_file_energy(gaussian_log_file):
         return gl.load_energy()
 
 
-def get_gaussian_file_geometry(gaussian_log_file):
-    """Function to get the ase atoms object from a Gaussian .log file"""
-    with open(gaussian_log_file, 'r') as f:
-        # check that it's really a gaussian file
-        line = f.readline()
-        if 'Gaussian' not in line:
-            return None
-        f.seek(0)
-        atoms = ase.io.gaussian.read_gaussian_out(f)
-        return atoms
+def get_gaussian_file_geometry(gaussian_log_file, use_ase=False):
+    """Function to get the ase atoms object from a Gaussian .log file
+        Uses Arkane's Gaussian ESS unless use_ase is true
+    """
+    if use_ase:
+        with open(gaussian_log_file, 'r') as f:
+            # check that it's really a gaussian file
+            line = f.readline()
+            if 'Gaussian' not in line:
+                return None
+            f.seek(0)
+            atoms = ase.io.gaussian.read_gaussian_out(f)
+            return atoms
+
+    gl = arkane.ess.gaussian.GaussianLog(gaussian_log_file)
+    coords, nums, mass = gl.load_geometry()
+    atoms = ase.Atoms(nums, coords)
+    return atoms
 
 
 def get_lowest_valid_conformer(conformer_dir, index=None, calc_type='species'):
@@ -2208,10 +2216,11 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to this even though it's not dependable
     # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
     reaction_log(reaction_index, f'Creating arkane files for reaction {reaction_index} {reaction.label}')
-    reaction.ts[direction][0].get_molecules()
 
     # pick the lowest energy valid transition state:
     TS_log = get_lowest_valid_ts(overall_dir)
+    reaction.ts[direction][0]._ase_molecule = get_gaussian_file_geometry(TS_log)
+    reaction.ts[direction][0].update_coords_from(mol_type="ase")
 
     # -------------------- Write the input file ---------------------- #
     # TODO move the model chemistry to a single variable at the top for easy customization
