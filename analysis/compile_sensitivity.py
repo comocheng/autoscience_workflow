@@ -10,6 +10,10 @@ import numpy as np
 mech_file = sys.argv[1]
 mech_dir = os.path.dirname(mech_file)
 
+main_table = 7
+if len(sys.argv) > 2:
+    main_table = int(sys.argv[2])
+
 # compile everything into a humongous array
 #             table1 table2 ... table12
 # species 1
@@ -22,20 +26,20 @@ mech_dir = os.path.dirname(mech_file)
 # reaction M
 
 # Compile the species sensitivities if that hasn't been done yet
-sp_delay_file = os.path.join(mech_dir, 'table_0007', 'species_delays_0007.npy')
+sp_delay_file = os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table:04}.npy')
 if not os.path.exists(sp_delay_file):
-    sp_files = glob.glob(os.path.join(mech_dir, 'table_0007', 'spec_delay_0007_*.npy'))
+    sp_files = glob.glob(os.path.join(mech_dir, f'table_{main_table:04}', f'spec_delay_{main_table:04}_*.npy'))
     N = len(sp_files)
     K = 51
     spec_delays = np.zeros((N, K))
     for i in range(N):
-        spec_delays[i, :] = np.load(os.path.join(mech_dir, 'table_0007', f'spec_delay_0007_{i:04}.npy'))
-    np.save(os.path.join(mech_dir, 'table_0007', f'species_delays_0007.npy'), spec_delays)
+        spec_delays[i, :] = np.load(os.path.join(mech_dir, f'table_{main_table:04}', f'spec_delay_{main_table:04}_{i:04}.npy'))
+    np.save(os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table:04}.npy'), spec_delays)
 
 
 # load examples to get the right size
-test_sp_file = os.path.join(mech_dir, 'table_0007', 'species_delays_0007.npy')
-test_rxn_file = os.path.join(mech_dir, 'table_0007', 'reaction_delays_0007_0000.npy')
+test_sp_file = os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table:04}.npy')
+test_rxn_file = os.path.join(mech_dir, f'table_{main_table:04}', f'reaction_delays_{main_table:04}_0000.npy')
 
 K = 51
 N = np.load(test_sp_file).shape[0]
@@ -45,14 +49,14 @@ print(f'M={M}', 'reactions')
 
 all_delays_ever = np.zeros((N + M, 12 * K))
 
-table_dir = os.path.join(mech_dir, f'table_0007')
-sp7_file = os.path.join(table_dir, f'species_delays_{7:04}.npy')
+table_dir = os.path.join(mech_dir, f'table_{main_table:04}')
+sp7_file = os.path.join(table_dir, f'species_delays_{main_table:04}.npy')
 if not os.path.exists(sp7_file):
-    sp_files = glob.glob(os.path.join(mech_dir, 'table_0007', 'spec_delay_0007_*.npy'))
+    sp_files = glob.glob(os.path.join(mech_dir, f'table_{main_table:04}', f'spec_delay_{main_table:04}_*.npy'))
     spec_delays = np.zeros((N, K))
     for i in range(N):
-        spec_delays[i, :] = np.load(os.path.join(mech_dir, 'table_0007', f'spec_delay_0007_{i:04}.npy'))
-    np.save(os.path.join(mech_dir, 'table_0007', f'species_delays_0007.npy'), spec_delays)
+        spec_delays[i, :] = np.load(os.path.join(mech_dir, f'table_{main_table:04}', f'spec_delay_{main_table}_{i:04}.npy'))
+    np.save(os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table}.npy'), spec_delays)
     # compile individual files into the overall species_delays_file
 
 
@@ -98,4 +102,7 @@ for table_index in range(1, 13):
 
     total_base_delays[(table_index - 1) * K:table_index * K] = np.load(base_delay_file)
 # save the resulting base delay array
+if np.all(total_base_delays == 0):
+    raise OSError(f'No base delays found!')
+
 np.save(os.path.join(mech_dir, 'total_base_delays.npy'), total_base_delays)

@@ -3,4 +3,5 @@
 #SBATCH --time=00:20:00
 #SBATCH --partition=express,short,west
 
-python $AUTOSCIENCE_REPO/analysis/compile_sensitivity.py $1
+# first argument is chem_annotated.inp file, second argument is the main table to use
+python $AUTOSCIENCE_REPO/analysis/compile_sensitivity.py $1 $2
