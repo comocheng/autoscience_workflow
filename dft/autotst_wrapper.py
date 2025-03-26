@@ -613,6 +613,141 @@ def optimize_conformers(species_index, force_rerun=False):
     os.chdir(start_dir)
 
 
+def setup_freq(index, calc_type='species', force_rerun=False):
+    # Run separate frequency calculation
+    assert calc_type in ['species', 'reaction']
+
+    # set up directories
+    if calc_type == 'species':
+        base_dir = os.path.join(DFT_DIR, 'thermo', f'species_{index:04}')
+        conformer_dir = os.path.join(base_dir, 'conformers')
+    elif calc_type == 'reaction':
+        base_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{index:06}')
+        conformer_dir = os.path.join(base_dir, 'overall')
+    else:
+        raise ValueError
+
+    freq_dir = os.path.join(base_dir, 'freq')
+    os.makedirs(freq_dir, exist_ok=True)
+    if force_rerun:
+        if calc_type == 'species':
+            species_log(index, 'Forcing rerun of species single-point calc setup')
+        elif calc_type == 'reaction':
+            reaction_log(index, 'Forcing rerun of reaction TS single-point calc setup')
+    else:
+        try:
+            gaussian_output_file = os.path.join(freq_dir, 'freq.log')
+            gaussian_logfile = arkane.ess.gaussian.GaussianLog(gaussian_output_file)
+            return True
+        except (arkane.exceptions.LogError, IndexError):
+            pass
+    if calc_type == 'species':
+        conformer_file = get_lowest_valid_conformer(conformer_dir, index, calc_type=calc_type)
+        species_log(index, f'Using conformer file {conformer_file}')
+    elif calc_type == 'reaction':
+        conformer_file = get_lowest_valid_ts(conformer_dir)
+        reaction_log(index, f'Using conformer file {conformer_file}')
+
+    # grab the xyz coordinates from the conformer file and save to xyz file
+    gaussian_logfile = arkane.ess.gaussian.GaussianLog(conformer_file)
+    coord, number, mass = gaussian_logfile.load_geometry()
+    atoms = ase.Atoms(positions=coord, symbols=number)
+
+    # write the Gaussian input file
+    if calc_type == 'species':
+        rmg_species = database_fun.index2species(index)
+    elif calc_type == 'reaction':
+        rmg_reaction = database_fun.index2reaction(index)
+        smiles = database_fun.reaction2smiles(rmg_reaction)
+        reaction = autotst.reaction.Reaction(label=smiles)
+        reaction.get_labeled_reaction()
+        reaction.get_label()
+        direction = 'forward'
+        reaction.ts[direction][0].get_molecules()
+        rmg_species = reaction.ts[direction][0].rmg_molecule
+
+    # write the gaussian calculation file
+    gaussian_input_file = os.path.join(freq_dir, 'freq.com')
+    with open(gaussian_input_file, 'w') as f:
+        ase.io.gaussian.write_gaussian_in(
+            f,
+            atoms,
+            properties=['energy'],
+            method='m062x',
+            basis='cc-pvtz',
+            mult=rmg_species.multiplicity,
+            charge=rmg_species.get_net_charge(),
+            extra=f'freq IOP(7/33=1,2/9=2000,2/16=3) scf=(maxcycle=900)',
+            mem='15GB',
+            nprocshared=24,
+        )
+
+    # write the slurm script
+    run_script = os.path.join(freq_dir, 'run.sh')
+    with open(run_script, 'w') as f:
+        f.write("""#!/bin/bash
+#SBATCH --job-name=freq_""" + str(index) + """
+#SBATCH --error=error.log
+#SBATCH --nodes=1
+#SBATCH --partition=west,short
+#SBATCH --exclude=c5003
+#SBATCH --mem=20Gb
+#SBATCH --time=24:00:00
+#SBATCH --ntasks=24
+
+export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
+mkdir -p $GAUSS_SCRDIR
+module load gaussian/g16
+source /shared/centos7/gaussian/g16/bsd/g16.profile
+
+
+g16 freq.com
+
+""")
+
+
+def run_freq(index, calc_type='species', force_rerun=False):
+    assert calc_type in ['species', 'reaction']
+    if calc_type == 'species':
+        base_dir = os.path.join(DFT_DIR, 'thermo', f'species_{index:04}')
+    elif calc_type == 'reaction':
+        base_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{index:06}')
+    freq_dir = os.path.join(base_dir, 'freq')
+    gaussian_output_file = os.path.join(freq_dir, 'freq.log')
+    run_freq_script = os.path.join(freq_dir, 'run.sh')
+    if force_rerun:
+        if calc_type == 'species':
+            species_log(index, 'Forcing rerun of species frequency calculation')
+        elif calc_type == 'reaction':
+            reaction_log(index, 'Forcing rerun of reaction frequency calculation')
+    else:
+        try:
+            gaussian_logfile = arkane.ess.gaussian.GaussianLog(gaussian_output_file)
+            return True
+        except arkane.exceptions.LogError:
+            pass
+
+    if calc_type == 'species':
+        species_log(index, f'Running frequency calculation job')
+    elif calc_type == 'reaction':
+        reaction_log(index, 'Running frequency calculation job')
+
+    # submit the job
+    start_dir = os.getcwd()
+    os.chdir(freq_dir)
+    freq_job = job_manager.SlurmJob()
+    slurm_cmd = f"sbatch {run_freq_script}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    freq_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+
 def setup_single_point(index, calc_type='species', force_rerun=False, parallel=True):
     # Run DPLNO CCSD(T) on optimized species conformer or ts_conformer
 
@@ -644,8 +779,10 @@ def setup_single_point(index, calc_type='species', force_rerun=False, parallel=T
             pass
     if calc_type == 'species':
         conformer_file = get_lowest_valid_conformer(conformer_dir, index, calc_type=calc_type)
+        species_log(index, f'Using conformer file {conformer_file}')
     elif calc_type == 'reaction':
         conformer_file = get_lowest_valid_ts(conformer_dir)
+        reaction_log(index, f'Using conformer file {conformer_file}')
 
     # grab the xyz coordinates from the conformer file and save to xyz file
     gaussian_logfile = arkane.ess.gaussian.GaussianLog(conformer_file)
@@ -1304,7 +1441,7 @@ def run_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsource
     # os.chdir(start_dir)
 
 
-def conformers_done_optimizing(base_dir, completion_threshold=0.2, base_name='conformer_'):
+def conformers_done_optimizing(base_dir, completion_threshold=0.02, base_name='conformer_'):
     """function to see if all the conformers are done optimizing, returns True if so"""
     glob_str = os.path.join(base_dir, f'{base_name}*.com')
     # print(f'glob str is {glob_str}')
