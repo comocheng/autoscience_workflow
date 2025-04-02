@@ -677,7 +677,7 @@ def setup_freq(index, calc_type='species', force_rerun=False):
             basis='cc-pvtz',
             mult=rmg_species.multiplicity,
             charge=rmg_species.get_net_charge(),
-            extra=f'freq IOP(7/33=1,2/9=2000,2/16=3) scf=(maxcycle=900)',
+            extra=f'freq IOP(7/33=1,2/9=2000) scf=(tight,direct) integral=(grid=ultrafine,Acc2E=12)',
             mem='15GB',
             nprocshared=24,
         )
@@ -919,7 +919,7 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0, freeze_c
         "%mem=5GB",
         "%nprocshared=16",
         "#P m062x/cc-pVTZ",
-        "Opt=(CalcFC,ModRedun)",
+        "Opt=(ts,CalcFC,ModRedun,noeig,maxcycles=900)" if freeze_core else "Opt=(CalcFC,ModRedun,noeig,maxcycles=900)" + " scf=(tight, direct, maxcycle=900) integral=(grid=ultrafine, Acc2E=12) iop(2/9=2000)",  # TS if freeze_core
         "",
         "Gaussian input for a rotor scan",
         "",
@@ -1202,7 +1202,7 @@ def run_rotors(species_index, increment_deg=20):
     os.chdir(start_dir)
 
 
-def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsource_dir=None):
+def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsource_dir=None, relaxed=True):
     """Set up rotor scans for a TS complex
     If outsource_dir is a path (like somewhere on scratch), save the results there
     """
@@ -1210,28 +1210,38 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
         raise NotImplementedError  # TODO <- implement customizable degrees
 
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
-    arkane_dir = os.path.join(reaction_dir, 'arkane')
-    overall_dir = os.path.join(reaction_dir, 'overall')
     rotor_dir = os.path.join(reaction_dir, 'rotors')
+    overall_dir = os.path.join(reaction_dir, 'overall')
     os.makedirs(rotor_dir, exist_ok=True)
     start_dir = os.getcwd()
-    rotor_str = 'rotor'
 
-    rotor_calculations_path = rotor_dir
-    # outsource_root = '/work/westgroup/SCRATCH/sevy_calcs'
-    # outsource_root = '/scratch/harris.se/guassian_scratch/rotor_calcs'
-    if outsource_dir and os.path.exists(outsource_dir):
-        rotor_calculations_path = os.path.join(outsource_dir, f'reaction_{reaction_index:06}')
-        os.makedirs(rotor_calculations_path, exist_ok=True)
+    if relaxed:
+        rotor_str = 'rotor'
+        # check if the rotors were already set up
+        rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
+        if force_rerun:
+            print(reaction_index, 'forcing rerun of ts rotors')
+        else:
+            if rotor_logfiles:
+                print(reaction_index, 'TS rotors already set up')
+                raise ValueError
+        print(reaction_index, f'Starting TS rotor setup')
+    else:
+        rotor_calculations_path = rotor_dir
+        # outsource_root = '/work/westgroup/SCRATCH/sevy_calcs'
+        # outsource_root = '/scratch/harris.se/guassian_scratch/rotor_calcs'
+        if outsource_dir and os.path.exists(outsource_dir):
+            rotor_calculations_path = os.path.join(outsource_dir, f'reaction_{reaction_index:06}')
+            os.makedirs(rotor_calculations_path, exist_ok=True)
 
-    # check if any of the rotor com files already exist
-    rotor_logfiles = glob.glob(os.path.join(rotor_calculations_path, 'rotor_*', f'{rotor_str}_*.com'))
-    if force_rerun:
-        reaction_log(reaction_index, 'forcing rerun of ts rotors')
-    elif rotor_logfiles:
-        reaction_log(reaction_index, 'TS rotors already set up')
-        return True
-    reaction_log(reaction_index, f'Starting TS rotor setup')
+        # check if any of the rotor com files already exist
+        rotor_logfiles = glob.glob(os.path.join(rotor_calculations_path, 'rotor_*', f'{rotor_str}_*.com'))
+        if force_rerun:
+            reaction_log(reaction_index, 'forcing rerun of ts rotors')
+        elif rotor_logfiles:
+            reaction_log(reaction_index, 'TS rotors already set up')
+            return True
+        reaction_log(reaction_index, f'Starting TS rotor setup')
 
     # Build the reaction TS complex
     reaction_log(reaction_index, f'Building TS complex')
@@ -1240,95 +1250,151 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
     reaction_smiles = database_fun.reaction_index2smiles(reaction_index)
     reaction = autotst.reaction.Reaction(label=reaction_smiles)  # going back to this even though it's not dependable
 
-    # Get the lowest energy conformer from the overall result
-    reaction_log(reaction_index, f'Loading TS geometry from gaussian log file')
     starting_geometry_file = get_lowest_valid_ts(overall_dir)
-    if not os.path.exists(starting_geometry_file) or get_termination_status(starting_geometry_file) != 0:
-        raise OSError('Could not find TS geometry file')
+
+    # Get the lowest energy conformer from the overall result -- look in the arkane folder
+    reaction_log(reaction_index, f'Loading TS geometry from gaussian log file')
     reaction.ts[direction][0]._ase_molecule = get_gaussian_file_geometry(starting_geometry_file)
     reaction.ts[direction][0].update_coords_from(mol_type="ase")
+
+    # get the rotors
     torsions = reaction.ts[direction][0].get_torsions()
     n_rotors = len(torsions)
-    new_cf = reaction.ts[direction][0]
+    if n_rotors == 0:
+        no_rotor_file = os.path.join(rotor_dir, 'NO_ROTORS.txt')
+        with open(no_rotor_file, 'w') as f:
+            f.write('NO ROTORS')
+        print(reaction_index, "no rotors to calculate")
+        raise ValueError
 
-    for rotor_index in range(n_rotors):
-        individual_rotor_dir = os.path.join(rotor_calculations_path, f'rotor_{rotor_index:04}')
-        os.makedirs(individual_rotor_dir, exist_ok=True)
-        os.chdir(individual_rotor_dir)
+    if relaxed:
+        reaction_log(reaction_index, "Generating relaxed gaussian input files")
+        # figure out which atoms compose the reaction core
+        for i, torsion in enumerate(reaction.ts[direction][0].torsions):
+            fname = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.com')
+            write_scan_file(fname, reaction.ts[direction][0], i, freeze_core=True)
 
-        atoms = new_cf.get_ase_mol()
-        angles = np.linspace(0, 360, 21)
-        energies = np.zeros(len(angles))
-
-        starting_dihedral = atoms.get_dihedral(
-            new_cf.torsions[rotor_index].atom_indices[0],
-            new_cf.torsions[rotor_index].atom_indices[1],
-            new_cf.torsions[rotor_index].atom_indices[2],
-            new_cf.torsions[rotor_index].atom_indices[3],
-        )
-
-        for angle_index in range(len(angles)):
-            # Reset dihedral to optimized starting point
-            atoms.set_dihedral(
-                new_cf.torsions[rotor_index].atom_indices[0],
-                new_cf.torsions[rotor_index].atom_indices[1],
-                new_cf.torsions[rotor_index].atom_indices[2],
-                new_cf.torsions[rotor_index].atom_indices[3],
-                starting_dihedral,
-                mask=new_cf.torsions[rotor_index].mask
-            )
-
-            # and rotate to desired increment
-            atoms.rotate_dihedral(
-                new_cf.torsions[rotor_index].atom_indices[0],
-                new_cf.torsions[rotor_index].atom_indices[1],
-                new_cf.torsions[rotor_index].atom_indices[2],
-                new_cf.torsions[rotor_index].atom_indices[3],
-                angles[angle_index],
-                mask=new_cf.torsions[rotor_index].mask
-            )
-
-            atoms.calc = ase.calculators.gaussian.Gaussian(
-                mem='5GB',
-                nprocshared='16',
-                label=f'rotor_{rotor_index:04}_{angle_index:04}',
-                method='m062x',
-                basis='cc-pVTZ',
-                scf='maxcycle=1000',
-                mult=new_cf.rmg_molecule.multiplicity
-            )
-
-            atoms.calc.write_input(atoms, properties=['energy'])
-
-        # write the run.sh file
         lines = [
             '#!/bin/bash\n',
-            '#SBATCH --job-name=' + f'rxn_{reaction_index:06}_rot_{rotor_index:04}' + '\n',
+            '#SBATCH --job-name=' + f'rotors_{reaction_index:06}' + '\n',
             '#SBATCH --partition=short,west\n',
-            '#SBATCH --time=24:00:00\n',
+            '#SBATCH --time=48:00:00\n',
             '#SBATCH --cpus-per-task=16\n',
             '#SBATCH --mem-per-cpu=7G\n',
-            '#SBATCH --array=0-21%5\n\n',
+            '#SBATCH --nodes=1\n',
+            '#SBATCH --exclusive\n',
+            f'#SBATCH --array=0-{n_rotors-1}%20' + '\n\n',
             'module load gaussian/g16\n',
             'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
-            'cd ' + individual_rotor_dir + '\n',
+            'cd ' + rotor_dir + '\n',
             'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-            'fname="rotor_' + f'{rotor_index:04}' + '_${RUN_i}.com"\n\n',
+            'fname="rotor_${RUN_i}.com"\n\n',
             'g16 $fname\n'
         ]
 
-        runfile = os.path.join(individual_rotor_dir, f'run.sh')
-        with open(runfile, 'w') as f:
-            f.writelines(lines)
-    os.chdir(start_dir)
+    else:
+        reaction_log(reaction_index, "Generating piecewise gaussian input files")
+
+        new_cf = reaction.ts[direction][0]
+        for rotor_index in range(n_rotors):
+            individual_rotor_dir = os.path.join(rotor_calculations_path, f'rotor_{rotor_index:04}')
+            os.makedirs(individual_rotor_dir, exist_ok=True)
+            os.chdir(individual_rotor_dir)
+
+            atoms = new_cf.get_ase_mol()
+            angles = np.linspace(0, 360, 21)
+            energies = np.zeros(len(angles))
+
+            starting_dihedral = atoms.get_dihedral(
+                new_cf.torsions[rotor_index].atom_indices[0],
+                new_cf.torsions[rotor_index].atom_indices[1],
+                new_cf.torsions[rotor_index].atom_indices[2],
+                new_cf.torsions[rotor_index].atom_indices[3],
+            )
+
+            for angle_index in range(len(angles)):
+                # Reset dihedral to optimized starting point
+                atoms.set_dihedral(
+                    new_cf.torsions[rotor_index].atom_indices[0],
+                    new_cf.torsions[rotor_index].atom_indices[1],
+                    new_cf.torsions[rotor_index].atom_indices[2],
+                    new_cf.torsions[rotor_index].atom_indices[3],
+                    starting_dihedral,
+                    mask=new_cf.torsions[rotor_index].mask
+                )
+
+                # and rotate to desired increment
+                atoms.rotate_dihedral(
+                    new_cf.torsions[rotor_index].atom_indices[0],
+                    new_cf.torsions[rotor_index].atom_indices[1],
+                    new_cf.torsions[rotor_index].atom_indices[2],
+                    new_cf.torsions[rotor_index].atom_indices[3],
+                    angles[angle_index],
+                    mask=new_cf.torsions[rotor_index].mask
+                )
+
+                atoms.calc = ase.calculators.gaussian.Gaussian(
+                    mem='5GB',
+                    nprocshared='16',
+                    label=f'rotor_{rotor_index:04}_{angle_index:04}',
+                    method='m062x',
+                    basis='cc-pVTZ',
+                    scf='maxcycle=1000',
+                    mult=new_cf.rmg_molecule.multiplicity
+                )
+
+                atoms.calc.write_input(atoms, properties=['energy'])
+
+            # write the run.sh file
+            lines = [
+                '#!/bin/bash\n',
+                '#SBATCH --job-name=' + f'rxn_{reaction_index:06}_rot_{rotor_index:04}' + '\n',
+                '#SBATCH --partition=short,west\n',
+                '#SBATCH --time=24:00:00\n',
+                '#SBATCH --cpus-per-task=16\n',
+                '#SBATCH --mem-per-cpu=7G\n',
+                '#SBATCH --nodes=1\n',
+                '#SBATCH --exclusive\n',
+                '#SBATCH --array=0-21%5\n\n',
+                'module load gaussian/g16\n',
+                'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+                'cd ' + individual_rotor_dir + '\n',
+                'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+                'fname="rotor_' + f'{rotor_index:04}' + '_${RUN_i}.com"\n\n',
+                'g16 $fname\n'
+            ]
+
+        os.chdir(start_dir)
+
+    runfile = os.path.join(rotor_dir, f'run.sh')
+    with open(runfile, 'w') as f:
+        f.writelines(lines)
     return True
 
 
 def run_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsource_dir=None):
     """Run the rotor scans that were set up"""
-    raise NotImplementedError('I dont feel confident about this yet')
-    if increment_deg != 30:
-        raise NotImplementedError  # TODO <- implement customizable degrees
+    # submit the job
+    reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
+    rotor_dir = os.path.join(reaction_dir, 'rotors')
+    start_dir = os.getcwd()
+    os.chdir(rotor_dir)
+    gaussian_rotors_job = job_manager.SlurmJob()
+    slurm_run_file = os.path.join(rotor_dir, f'run.sh')
+    slurm_cmd = f"sbatch {slurm_run_file}"
+
+    # wait for fewer than MAX_JOBS_RUNNING jobs running
+    jobs_running = job_manager.count_slurm_jobs()
+    while jobs_running > MAX_JOBS_RUNNING:
+        time.sleep(60)
+        jobs_running = job_manager.count_slurm_jobs()
+
+    gaussian_rotors_job.submit(slurm_cmd)
+    os.chdir(start_dir)
+
+    # raise NotImplementedError('I dont feel confident about this yet')
+    # if increment_deg != 30:
+    #     raise NotImplementedError  # TODO <- implement customizable degrees
 
     # reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     # rotor_dir = os.path.join(reaction_dir, 'rotors')
@@ -1859,31 +1925,22 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
     new_cf = autotst.species.Conformer(smiles=species_smiles)
     # read the conformer geometry from the file
 
+    conformer_file = os.path.join(species_dir, 'freq', 'freq.log')
+    assert os.path.exists(conformer_file)
+
     if include_rotors:
-        # copy the conformer file in the rotors dir
-        conformer_files = glob.glob(os.path.join(rotor_dir, 'conformer_*.log'))
-        assert conformer_files, 'No conformer files in rotor dir'
-        conformer_file = conformer_files[0]
-
-        if os.path.exists(os.path.join(rotor_dir, 'iop_recalc.log')):
-            # switch out the iop calc for the conformer file.
-            shutil.copyfile(os.path.join(rotor_dir, 'iop_recalc.log'), conformer_file)
-
         # copy the rotor files
         rotor_files = glob.glob(os.path.join(rotor_dir, 'rotor_*.log'))
         for rotor_file in rotor_files:
             if has_rotor_errors(rotor_file):
                 species_log(species_index, f'Errors with rotor_file {rotor_file}')
-            else:
-                shutil.copy(rotor_file, arkane_dir)
+
+            shutil.copy(rotor_file, arkane_dir)
 
         if os.path.exists(fixed_rotor_dir):
             fixed_rotor_files = glob.glob(os.path.join(fixed_rotor_dir, 'rotor_*_scan_energies.txt'))
             for fixed_rotor_file in fixed_rotor_files:
                 shutil.copy(fixed_rotor_file, arkane_dir)
-
-    else:
-        conformer_file = get_lowest_energy_gaussian_file(conformer_dir)
 
     shutil.copy(conformer_file, arkane_dir)
     orca_logfile = os.path.join(single_point_dir, 'conformer.out')
@@ -2436,8 +2493,8 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     # reaction = autotst.reaction.Reaction(rmg_reaction=rmg_reaction)
     reaction_log(reaction_index, f'Creating arkane files for reaction {reaction_index} {reaction.label}')
 
-    # pick the lowest energy valid transition state:
-    TS_log = get_lowest_valid_ts(overall_dir)
+    # Use the frequency calculation as the TS geometry and frequency log:
+    TS_log = os.path.join(reaction_dir, 'freq', 'freq.log')
     reaction.ts[direction][0]._ase_molecule = get_gaussian_file_geometry(TS_log)
     reaction.ts[direction][0].update_coords_from(mol_type="ase")
 
@@ -2471,15 +2528,9 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         species_smiles = reactant.smiles
         species_name = get_sp_name(species_smiles)
         species_arkane_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}', 'arkane')
-        try:
-            species_file = os.path.join(f'species_{species_index:04}', os.path.basename(glob.glob(os.path.join(species_arkane_dir, 'conformer_*.py'))[0]))
-        except IndexError:
-            # automatically start the process of running the missing species...
+        species_file = os.path.join(f'species_{species_index:04}', 'freq.py')
+        if not os.path.exists(os.path.join(species_arkane_dir, os.path.basename(species_file))):
             reaction_log(reaction_index, f'Missing species conformer file {species_arkane_dir}')
-            reaction_log(reaction_index, f'Starting species calculation for species {species_index}: {species_smiles}')
-            screen_species_conformers(species_index)
-            optimize_conformers(species_index)
-
             raise IndexError(f'No species conformer file found in {species_arkane_dir}')
 
         try:
@@ -2513,13 +2564,6 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         if os.path.exists(os.path.join(arkane_ts_dir, os.path.basename(TS_log))):
             os.remove(os.path.join(arkane_ts_dir, os.path.basename(TS_log)))
     shutil.copy(TS_log, arkane_ts_dir)
-
-    #########  TEMPORARY BUG FIX -- this should not be a permanent part of the workflow ########
-    iop_bugfix_log = os.path.join(rotor_dir, 'iop_recalc.log')
-    if os.path.exists(iop_bugfix_log):
-        # this is the real TS geometry/frequency log and we should use this instead of the TS_log
-        reaction_log(reaction_index, f'Copying iop 2/9 bugfix logfile to replace old TS geo/freq logfile')
-        shutil.copyfile(iop_bugfix_log, os.path.join(arkane_ts_dir, os.path.basename(TS_log)))
 
     lines.append(f'transitionState("{TS_name}", "{TS_file}")\n')
 
@@ -2560,30 +2604,59 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         #     conformer.get_geometries()
         # for i, torsion in enumerate(conformer.torsions):
         for i, torsion in enumerate(torsions):
-            rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')
+            relaxed = True
+            rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}.log')
             if not os.path.exists(rotor_file):
-                reaction_log(reaction_index, f'cannot file rotor file {rotor_file}')
-                rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
+                relaxed = False
+                reaction_log(reaction_index, f'cannot file rotor file {rotor_file}. Will try assembling rotor scan energy log')
+                example_rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
+                rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')  # final energy scan file in rotors dir
 
                 outsource_dir = os.path.join('/scratch/harris.se/guassian_scratch/rotor_calcs/', f'reaction_{reaction_index:06}', f'rotor_{i:04}')
                 outsource_log_file = os.path.join(outsource_dir, f'rotor_{i:04}_0000.log')
-                if os.path.exists(rotor_log_file):
+                if os.path.exists(example_rotor_log_file):
                     assemble_rotor_scan_energies(rotor_dir, i)
                 elif os.path.exists(outsource_log_file):
                     reaction_log(reaction_index, f'Assembling rotor scan from {outsource_dir}')
                     assemble_rotor_scan_energies(outsource_dir, i)
-                    scan_energy_file = os.path.join(outsource_dir, f'rotor_{i:04}_scan_energies.txt')
+                    scan_energy_file = os.path.join(outsource_dir, os.path.basename(rotor_file))
                     shutil.copyfile(scan_energy_file, rotor_file)
                 else:
                     raise OSError(f'No rotor file for reaction {reaction_index} rotor {i}')
 
-
             if force_rerun:
                 if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt')):
                     os.remove(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt'))
+                if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}.log')):
+                    os.remove(os.path.join(arkane_ts_dir, f'rotor_{i:04}.log'))
             shutil.copy(rotor_file, arkane_ts_dir)
+
             # ts_lines.append(get_rotor_info(conformer, torsion, i, relaxed=False) + '\n')
-            ts_lines.append(get_rotor_info(reaction.ts[direction][0], torsion, i, relaxed=False) + '\n')
+            ts_lines.append(get_rotor_info(reaction.ts[direction][0], torsion, i, relaxed=relaxed) + '\n')
+            # rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')
+            # if not os.path.exists(rotor_file):
+            #     reaction_log(reaction_index, f'cannot file rotor file {rotor_file}')
+            #     rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
+
+            #     outsource_dir = os.path.join('/scratch/harris.se/guassian_scratch/rotor_calcs/', f'reaction_{reaction_index:06}', f'rotor_{i:04}')
+            #     outsource_log_file = os.path.join(outsource_dir, f'rotor_{i:04}_0000.log')
+            #     if os.path.exists(rotor_log_file):
+            #         assemble_rotor_scan_energies(rotor_dir, i)
+            #     elif os.path.exists(outsource_log_file):
+            #         reaction_log(reaction_index, f'Assembling rotor scan from {outsource_dir}')
+            #         assemble_rotor_scan_energies(outsource_dir, i)
+            #         scan_energy_file = os.path.join(outsource_dir, f'rotor_{i:04}_scan_energies.txt')
+            #         shutil.copyfile(scan_energy_file, rotor_file)
+            #     else:
+            #         raise OSError(f'No rotor file for reaction {reaction_index} rotor {i}')
+
+
+            # if force_rerun:
+            #     if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt')):
+            #         os.remove(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt'))
+            # shutil.copy(rotor_file, arkane_ts_dir)
+            # # ts_lines.append(get_rotor_info(conformer, torsion, i, relaxed=False) + '\n')
+            # ts_lines.append(get_rotor_info(reaction.ts[direction][0], torsion, i, relaxed=False) + '\n')
         ts_lines.append("]\n")
 
     with open(TS_arkane_path, 'w') as g:

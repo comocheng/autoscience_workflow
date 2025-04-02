@@ -32,32 +32,40 @@ os.makedirs(rigid_rotor_dir, exist_ok=True)
 rmg_species = database_fun.index2species(species_index)
 species_smiles = rmg_species.smiles
 
-valid_conformer = False
-conformer_blacklist = []
-while not valid_conformer:
-    conformer_file = autotst_wrapper.get_lowest_energy_gaussian_file(conformer_dir, blacklist=conformer_blacklist)
-    if not conformer_file:
-        species_log(species_index, f'Failed to find lowest energy gaussian file in {conformer_dir}')
-        species_log(species_index, f'Conformer blacklist is {conformer_blacklist}')
+conformer_file = autotst_wrapper.get_lowest_valid_conformer(conformer_dir, species_index)
 
-    if autotst_wrapper.bonds_too_large(conformer_file, species_index):
-        conformer_blacklist.append(conformer_file)
-        species_log(species_index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
-    else:
-        valid_conformer = True
-        print(species_index, f'Lowest energy conformer is {conformer_file}')
+# valid_conformer = False
+# conformer_blacklist = []
+# while not valid_conformer:
+#     conformer_file = autotst_wrapper.get_lowest_energy_gaussian_file(conformer_dir, blacklist=conformer_blacklist)
+#     if not conformer_file:
+#         autotst_wrapper.species_log(species_index, f'Failed to find lowest energy gaussian file in {conformer_dir}')
+#         autotst_wrapper.species_log(species_index, f'Conformer blacklist is {conformer_blacklist}')
 
-    if len(conformer_blacklist) >= len(glob.glob(os.path.join(conformer_dir, 'conformer_*.log'))):
-        print(species_index, f'No valid conformers found. Quitting...')
-        raise ValueError
+#     if autotst_wrapper.bonds_too_large(conformer_file, species_index):
+#         conformer_blacklist.append(conformer_file)
+#         autotst_wrapper.species_log(species_index, f'Bonds too large for conformer {conformer_file}, blacklisting...')
+#     else:
+#         valid_conformer = True
+#         print(species_index, f'Lowest energy conformer is {conformer_file}')
 
+#     if len(conformer_blacklist) >= len(glob.glob(os.path.join(conformer_dir, 'conformer_*.log'))):
+#         print(species_index, f'No valid conformers found. Quitting...')
+#         raise ValueError
+
+smiles = database_fun.index2species(species_index).smiles
+new_cf = autotst.species.Conformer(smiles=smiles)  # TODO make this from adjacency list?
 new_conformer_loc = os.path.join(rotor_dir, os.path.basename(conformer_file))
 # get the rotors
 with open(new_conformer_loc, 'r') as f:
     atoms = ase.io.gaussian.read_gaussian_out(f)
+    if autotst_wrapper.bonds_too_large(None, species_index, atoms=atoms):
+        # try reordering
+        atoms = autotst_wrapper.reorder_atoms(new_cf.rmg_molecule, atoms)
+        if not atoms:
+            print('Could not reorder the atoms')
 
-smiles = database_fun.index2species(species_index).smiles
-new_cf = autotst.species.Conformer(smiles=smiles)  # TODO make this from adjacency list?
+
 new_cf._ase_molecule = atoms
 new_cf.update_coords_from(mol_type="ase")
 torsions = new_cf.get_torsions()  # TODO - is this only the nonterminal ones?
@@ -87,6 +95,8 @@ atoms.rotate_dihedral(
 # atoms.calc = xtb.ase.calculator.XTB(method="GFN2-xTB")
 
 atoms.calc = ase.calculators.gaussian.Gaussian(
+    mem='5GB',
+    nprocshared='16',
     label=f'rotor_{rotor_index:04}_{angle_index:04}',
     method='m062x',
     basis='cc-pVTZ',

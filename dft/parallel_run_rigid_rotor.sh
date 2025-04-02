@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=16
-#SBATCH --array=0-21
+#SBATCH --mem-per-cpu=7G
+#SBATCH --array=0-21%5
 
 export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
 module load gaussian/g16

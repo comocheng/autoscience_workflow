@@ -101,6 +101,8 @@ atoms.calc = ase.calculators.gaussian.Gaussian(
 
 if outsource:
     atoms.calc.write_input(atoms, properties=['energy'])
+    energy = atoms.get_potential_energy()
+    print(energy)
 
 else:
     energy = atoms.get_potential_energy()
