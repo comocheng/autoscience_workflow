@@ -475,13 +475,9 @@ def screen_species_conformers(species_index, force_rerun=False):
     spec = autotst.species.Species([species_smiles])
     species_log(species_index, f'Loaded species {species_smiles}')
 
-    try:
-        # calc = hotbit.Hotbit()
-        calc = xtb.ase.calculator.XTB()
-    except (NameError, RuntimeError):
-        # if hotbit fails, use built-in lennard jones
-        species_log(species_index, 'Using built-in ase LennardJones calculator instead of Hotbit. DO NOT DO THIS')
-        calc = ase.calculators.lj.LennardJones()
+    # calc = hotbit.Hotbit()
+    calc = xtb.ase.calculator.XTB()
+
     # hotbit can't handle Ar, He, change calculator to lj if it's in the species
     hotbit_skiplist = ['AR', 'HE', 'NE']
     for element in hotbit_skiplist:
@@ -1208,7 +1204,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
     """
     if increment_deg != 30:
         raise NotImplementedError  # TODO <- implement customizable degrees
-
+    rotor_str = 'rotor'
     reaction_dir = os.path.join(DFT_DIR, 'kinetics', f'reaction_{reaction_index:06}')
     rotor_dir = os.path.join(reaction_dir, 'rotors')
     overall_dir = os.path.join(reaction_dir, 'overall')
@@ -1216,7 +1212,6 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
     start_dir = os.getcwd()
 
     if relaxed:
-        rotor_str = 'rotor'
         # check if the rotors were already set up
         rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
         if force_rerun:
@@ -1291,6 +1286,9 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
             'fname="rotor_${RUN_i}.com"\n\n',
             'g16 $fname\n'
         ]
+        runfile = os.path.join(rotor_dir, f'run.sh')
+        with open(runfile, 'w') as f:
+            f.writelines(lines)
 
     else:
         reaction_log(reaction_index, "Generating piecewise gaussian input files")
@@ -1363,12 +1361,13 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
                 'fname="rotor_' + f'{rotor_index:04}' + '_${RUN_i}.com"\n\n',
                 'g16 $fname\n'
             ]
+            runfile = os.path.join(individual_rotor_dir, f'run.sh')
+            with open(runfile, 'w') as f:
+                f.writelines(lines)
 
         os.chdir(start_dir)
 
-    runfile = os.path.join(rotor_dir, f'run.sh')
-    with open(runfile, 'w') as f:
-        f.writelines(lines)
+    
     return True
 
 
@@ -2606,7 +2605,9 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
         for i, torsion in enumerate(torsions):
             relaxed = True
             rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}.log')
-            if not os.path.exists(rotor_file):
+            try:
+                gl = arkane.ess.ess_factory(rotor_file)
+            except (FileNotFoundError, arkane.exceptions.LogError):
                 relaxed = False
                 reaction_log(reaction_index, f'cannot file rotor file {rotor_file}. Will try assembling rotor scan energy log')
                 example_rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
@@ -2616,6 +2617,8 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
                 outsource_log_file = os.path.join(outsource_dir, f'rotor_{i:04}_0000.log')
                 if os.path.exists(example_rotor_log_file):
                     assemble_rotor_scan_energies(rotor_dir, i)
+                elif os.path.exists(rotor_file):
+                    reaction_log(reaction_index, f'Using existing rotor scan file {rotor_file}')
                 elif os.path.exists(outsource_log_file):
                     reaction_log(reaction_index, f'Assembling rotor scan from {outsource_dir}')
                     assemble_rotor_scan_energies(outsource_dir, i)

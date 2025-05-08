@@ -6,4 +6,3 @@ idx = int(sys.argv[1])
 
 autotst_wrapper.setup_opt(idx, 'shell')
 autotst_wrapper.run_opt(idx, 'shell')
-

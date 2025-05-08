@@ -14,7 +14,7 @@ if len(sys.argv) > 2:
         force_valid_ts = True
 
 
-autotst_wrapper.setup_arkane_reaction(idx, force_valid_ts=force_valid_ts)
+autotst_wrapper.setup_arkane_reaction(idx, force_valid_ts=force_valid_ts, force_rerun=True)
 autotst_wrapper.run_arkane_reaction(idx)
 
 # check if it worked, and if not run one of the fixing scripts
