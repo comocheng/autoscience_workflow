@@ -72,17 +72,8 @@ MAX_JOBS_RUNNING = 50
 MAX_N_CONFORMERS = 10
 MAX_JOBS_PER_TASK = 30
 
-environment = os.environ['COMPUTE_ENVIRONMENT']
-assert environment in ['DISCOVERY', 'EXPANSE']
-slurm_script_dir = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft', 'slurm_scripts')
-species_conformer_scripts = {
-    'DISCOVERY': os.path.join(slurm_script_dir, 'species_conformer_discovery.sh'),
-    'EXPANSE': os.path.join(slurm_script_dir, 'species_conformer_expanse.sh')
-}
-species_conformer_rerun_scripts = {
-    'DISCOVERY': os.path.join(slurm_script_dir, 'species_conformer_rerun_discovery.sh'),
-    'EXPANSE': os.path.join(slurm_script_dir, 'species_conformer_rerun_expanse.sh')
-}
+ENVIRONMENT = os.environ['COMPUTE_ENVIRONMENT']
+assert ENVIRONMENT in ['DISCOVERY', 'EXPANSE']
 
 
 def get_xyz(atoms, fmt='%22.15f'):  # taken from ase.io.xyz's write_xyz function
@@ -540,6 +531,7 @@ def optimize_conformers(species_index, force_rerun=False):
 
     species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
     conformer_dir = os.path.join(species_dir, 'conformers')
+    slurm_script_dir = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft', 'slurm_scripts')
     species_log(species_index, f'Starting conformer optimization job')
 
     # check if the run was already completed
@@ -568,61 +560,21 @@ def optimize_conformers(species_index, force_rerun=False):
         return False
 
     # Make slurm script to run all the conformer calculations
-    base_script = species_conformer_scripts[environment]
+    base_script = os.path.join(slurm_script_dir, f'species_conformer_{ENVIRONMENT.lower()}.sh')
     array_text = f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}'
-
     if rerun_indices:
-        base_script = species_conformer_rerun_scripts[environment]
+        base_script = os.path.join(slurm_script_dir, f'species_conformer_rerun_{ENVIRONMENT.lower()}.sh')
         array_text = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
 
     with open(base_script, 'r') as f:
         base_script_text = f.read()
-
     base_script_text = base_script_text.format(
         job_name=f'g16_cf_{species_index}',
         array=array_text
     )
-
     slurm_run_file = os.path.join(conformer_dir, 'run.sh')
     with open(slurm_run_file, 'w') as f:
         f.write(base_script_text)
-    time.sleep(1.0)
-
-    # slurm_settings = {
-    #     '--job-name': f'g16_cf_{species_index}',
-    #     '--error': 'error.log',
-    #     '--nodes': 1,
-    #     '--partition': 'west,short',
-    #     '--exclude': 'c5003',
-    #     '--mem': '20Gb',
-    #     '--time': '24:00:00',
-    #     '--cpus-per-task': 16,
-    #     '--array': f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}',
-    # }
-    # if rerun_indices:
-    #     slurm_run_file = os.path.join(conformer_dir, 'rerun.sh')
-    #     slurm_settings['--partition'] = 'short'
-    #     slurm_settings['--constraint'] = 'cascadelake'
-    #     slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
-    #     slurm_settings['--cpus-per-task'] = 32
-    #     slurm_settings.pop('--exclude')
-
-    # slurm_file_writer = job_manager.SlurmJobFile(
-    #     full_path=slurm_run_file,
-    # )
-    # slurm_file_writer.settings = slurm_settings
-    # slurm_file_writer.content = [
-    #     'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
-    #     'mkdir -p $GAUSS_SCRDIR\n',
-    #     'module load gaussian/g16\n',
-    #     'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
-
-    #     'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-    #     'fname="conformer_${RUN_i}.com"\n\n',
-
-    #     'g16 $fname\n',
-    # ]
-    # slurm_file_writer.write_file()
 
     # submit the job
     start_dir = os.getcwd()
@@ -672,7 +624,7 @@ def setup_freq(index, calc_type='species', force_rerun=False):
         conformer_file = get_lowest_valid_conformer(conformer_dir, index, calc_type=calc_type)
         species_log(index, f'Using conformer file {conformer_file}')
     elif calc_type == 'reaction':
-        conformer_file = get_lowest_valid_ts(conformer_dir)
+        conformer_file = get_lowest_validts(conformer_dir)
         reaction_log(index, f'Using conformer file {conformer_file}')
 
     # grab the xyz coordinates from the conformer file and save to xyz file
@@ -691,7 +643,7 @@ def setup_freq(index, calc_type='species', force_rerun=False):
         reaction.get_label()
         direction = 'forward'
         reaction.ts[direction][0].get_molecules()
-        rmg_species = reaction.ts[direction][0].rmg_molecule
+        rmg_species = reaction.ts[direct_ion][0].rmg_molecule
 
     # write the gaussian calculation file
     gaussian_input_file = os.path.join(freq_dir, 'freq.com')
@@ -711,26 +663,16 @@ def setup_freq(index, calc_type='species', force_rerun=False):
 
     # write the slurm script
     run_script = os.path.join(freq_dir, 'run.sh')
+
+    # Make slurm script to run all the conformer calculations
+    base_script = os.path.join(slurm_script_dir, f'freq_{ENVIRONMENT.lower()}.sh')
+    with open(base_script, 'r') as f:
+        base_script_text = f.read()
+    base_script_text = base_script_text.format(
+        job_name=f'freq_{str(index)}',
+    )
     with open(run_script, 'w') as f:
-        f.write("""#!/bin/bash
-#SBATCH --job-name=freq_""" + str(index) + """
-#SBATCH --error=error.log
-#SBATCH --nodes=1
-#SBATCH --partition=west,short
-#SBATCH --exclude=c5003
-#SBATCH --mem=20Gb
-#SBATCH --time=24:00:00
-#SBATCH --ntasks=24
-
-export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
-mkdir -p $GAUSS_SCRDIR
-module load gaussian/g16
-source /shared/centos7/gaussian/g16/bsd/g16.profile
-
-
-g16 freq.com
-
-""")
+        f.write(base_script_text)
 
 
 def run_freq(index, calc_type='species', force_rerun=False):
