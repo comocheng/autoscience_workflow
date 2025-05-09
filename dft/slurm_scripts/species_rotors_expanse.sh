@@ -6,9 +6,9 @@
 #SBATCH --partition=shared
 #SBATCH --account=nrt112
 #SBATCH --ntasks-per-node=1
-#SBATCH --mem=50Gb
+#SBATCH --mem=20Gb
 #SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=16
 #SBATCH --array={array}
 
 
@@ -20,8 +20,8 @@ exe=`which g16`
 export GAUSS_SCRDIR=/scratch/$USER/job_$SLURM_JOBID
 
 RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))
-in_fname="conformer_$RUN_i.com"
-out_fname="conformer_$RUN_i.log"
+in_fname="rotor_$RUN_i.com"
+out_fname="rotor_$RUN_i.log"
 
 bash /cm/shared/examples/sdsc/gaussian/cpu/getcpusets $$
 cat $$.out $in_fname >file.tmp.$$
