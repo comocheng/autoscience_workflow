@@ -72,6 +72,18 @@ MAX_JOBS_RUNNING = 50
 MAX_N_CONFORMERS = 10
 MAX_JOBS_PER_TASK = 30
 
+environment = os.environ['COMPUTE_ENVIRONMENT']
+assert environment in ['DISCOVERY', 'EXPANSE']
+slurm_script_dir = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft', 'slurm_scripts')
+species_conformer_scripts = {
+    'DISCOVERY': os.path.join(slurm_script_dir, 'species_conformer_discovery.sh'),
+    'EXPANSE': os.path.join(slurm_script_dir, 'species_conformer_expanse.sh')
+}
+species_conformer_rerun_scripts = {
+    'DISCOVERY': os.path.join(slurm_script_dir, 'species_conformer_rerun_discovery.sh'),
+    'EXPANSE': os.path.join(slurm_script_dir, 'species_conformer_rerun_expanse.sh')
+}
+
 
 def get_xyz(atoms, fmt='%22.15f'):  # taken from ase.io.xyz's write_xyz function
     # returns the positions of the ase.atoms.Atoms object in xyz format as a string
@@ -556,42 +568,61 @@ def optimize_conformers(species_index, force_rerun=False):
         return False
 
     # Make slurm script to run all the conformer calculations
-    slurm_run_file = os.path.join(conformer_dir, 'run.sh')
-    slurm_settings = {
-        '--job-name': f'g16_cf_{species_index}',
-        '--error': 'error.log',
-        '--nodes': 1,
-        '--partition': 'west,short',
-        '--exclude': 'c5003',
-        '--mem': '20Gb',
-        '--time': '24:00:00',
-        '--cpus-per-task': 16,
-        '--array': f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}',
-    }
+    base_script = species_conformer_scripts[environment]
+    array_text = f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}'
+
     if rerun_indices:
-        slurm_run_file = os.path.join(conformer_dir, 'rerun.sh')
-        slurm_settings['--partition'] = 'short'
-        slurm_settings['--constraint'] = 'cascadelake'
-        slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
-        slurm_settings['--cpus-per-task'] = 32
-        slurm_settings.pop('--exclude')
+        base_script = species_conformer_rerun_scripts[environment]
+        array_text = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
 
-    slurm_file_writer = job_manager.SlurmJobFile(
-        full_path=slurm_run_file,
+    with open(base_script, 'r') as f:
+        base_script_text = f.read()
+
+    base_script_text.format(
+        job_name=f'g16_cf_{species_index}',
+        array=array_text
     )
-    slurm_file_writer.settings = slurm_settings
-    slurm_file_writer.content = [
-        'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
-        'mkdir -p $GAUSS_SCRDIR\n',
-        'module load gaussian/g16\n',
-        'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
 
-        'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-        'fname="conformer_${RUN_i}.com"\n\n',
+    slurm_run_file = os.path.join(conformer_dir, 'run.sh')
+    with open(slurm_run_file, 'w') as f:
+        f.write(base_script_text)
+    time.sleep(1.0)
 
-        'g16 $fname\n',
-    ]
-    slurm_file_writer.write_file()
+    # slurm_settings = {
+    #     '--job-name': f'g16_cf_{species_index}',
+    #     '--error': 'error.log',
+    #     '--nodes': 1,
+    #     '--partition': 'west,short',
+    #     '--exclude': 'c5003',
+    #     '--mem': '20Gb',
+    #     '--time': '24:00:00',
+    #     '--cpus-per-task': 16,
+    #     '--array': f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}',
+    # }
+    # if rerun_indices:
+    #     slurm_run_file = os.path.join(conformer_dir, 'rerun.sh')
+    #     slurm_settings['--partition'] = 'short'
+    #     slurm_settings['--constraint'] = 'cascadelake'
+    #     slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
+    #     slurm_settings['--cpus-per-task'] = 32
+    #     slurm_settings.pop('--exclude')
+
+    # slurm_file_writer = job_manager.SlurmJobFile(
+    #     full_path=slurm_run_file,
+    # )
+    # slurm_file_writer.settings = slurm_settings
+    # slurm_file_writer.content = [
+    #     'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
+    #     'mkdir -p $GAUSS_SCRDIR\n',
+    #     'module load gaussian/g16\n',
+    #     'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
+
+    #     'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
+    #     'fname="conformer_${RUN_i}.com"\n\n',
+
+    #     'g16 $fname\n',
+    # ]
+    # slurm_file_writer.write_file()
 
     # submit the job
     start_dir = os.getcwd()
@@ -1367,7 +1398,6 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
 
         os.chdir(start_dir)
 
-    
     return True
 
 
