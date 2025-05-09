@@ -578,7 +578,7 @@ def optimize_conformers(species_index, force_rerun=False):
     with open(base_script, 'r') as f:
         base_script_text = f.read()
 
-    base_script_text.format(
+    base_script_text = base_script_text.format(
         job_name=f'g16_cf_{species_index}',
         array=array_text
     )
