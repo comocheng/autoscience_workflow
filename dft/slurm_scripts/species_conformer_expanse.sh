@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --export=ALL
 #SBATCH --partition=shared
-#SBATCH --project=nrt112
+#SBATCH --account=nrt112
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=20Gb
 #SBATCH --time=24:00:00
