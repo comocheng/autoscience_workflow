@@ -797,43 +797,17 @@ def setup_single_point(index, calc_type='species', force_rerun=False, parallel=T
 
     # write the slurm script
     run_orca_script = os.path.join(single_point_dir, 'run.sh')
+
+    # Make slurm script to run all the conformer calculations
+    base_script = os.path.join(slurm_script_dir, f'single_point_{ENVIRONMENT.lower()}.sh')
+    with open(base_script, 'r') as f:
+        base_script_text = f.read()
+    base_script_text = base_script_text.format(
+        job_name=f'orca_{calc_type}_{index:06}',
+        single_point_dir=single_point_dir,
+    )
     with open(run_orca_script, 'w') as f:
-        # TODO format the text without """ so it doesn't mess with VSCode's collapse function button
-        f.write("""#!/bin/bash
-#SBATCH --job-name=""" + f'orca_{calc_type}_{index:06}' + """
-#SBATCH --error=error.log
-#SBATCH --nodes=1
-#SBATCH --partition=west,short
-#SBATCH --exclude=c5003
-#SBATCH --mem=200Gb
-#SBATCH --time=48:00:00
-#SBATCH --ntasks=16
-
-
-ompi=/work/westgroup/orca/openmpi-4.1.6/build
-PATH=$ompi/bin:$PATH
-LD_LIBRARY_PATH=$ompi/lib:$ompi/etc:$LD_LIBRARY_PATH
-
-#Orca
-orcadir=/work/westgroup/orca/orca_6_0_1_linux_x86-64_shared_openmpi416
-export PATH=$PATH:$orcadir
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$orcadir
-
-
-""" + f"cd {single_point_dir}" + """
-
-# delete previous attempts
-""" + f"rm {single_point_dir}/*.tmp" + """
-""" + f"rm {single_point_dir}/*.gbw" + """
-""" + f"rm {single_point_dir}/*.gbw" + """
-""" + f"rm {single_point_dir}/*.prop" + """
-""" + f"rm {single_point_dir}/*bas*" + """
-""" + f"rm {single_point_dir}/*.0" + """
-""" + f"rm {single_point_dir}/*.densities*" + """
-
-$orcadir/orca conformer.inp > conformer.out
-
-    """)
+        f.write(base_script_text)
 
 
 def run_single_point(index, calc_type='species', force_rerun=False):
@@ -2251,6 +2225,9 @@ def run_opt(reaction_index, opt_type, direction='forward', force_rerun=False):
             to_run_indices.append(int(m1.groups()[0]))
         array_text = ordered_array_str(to_run_indices) + f'%{MAX_JOBS_PER_TASK}'
 
+    if rerun_indices:
+        array_text = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
+
     # Make slurm script to run all the conformer calculations
     slurm_run_file = os.path.join(opt_dir, 'run.sh')
 
@@ -2264,42 +2241,6 @@ def run_opt(reaction_index, opt_type, direction='forward', force_rerun=False):
     )
     with open(slurm_run_file, 'w') as f:
         f.write(base_script_text)
-
-    # slurm_settings = {
-    #     '--job-name': f'g16_{opt_type}_{reaction_index}',
-    #     '--error': 'error.log',
-    #     '--nodes': 1,
-    #     '--partition': 'west,short',
-    #     '--exclude': 'c5003',
-    #     '--mem': '20Gb',
-    #     '--time': '24:00:00',
-    #     '--cpus-per-task': 16,
-    #     '--array': f'0-{n_conformers - 1}%{MAX_JOBS_PER_TASK}',
-    # }
-    # if rerun_indices:
-    #     slurm_run_file = os.path.join(opt_dir, 'rerun.sh')
-    #     slurm_settings['--partition'] = 'short'
-    #     slurm_settings['--constraint'] = 'cascadelake'
-    #     slurm_settings['--array'] = ordered_array_str(rerun_indices) + f'%{MAX_JOBS_PER_TASK}'
-    #     slurm_settings['--cpus-per-task'] = 32
-    #     slurm_settings.pop('--exclude')
-
-    # slurm_file_writer = job_manager.SlurmJobFile(
-    #     full_path=slurm_run_file,
-    # )
-    # slurm_file_writer.settings = slurm_settings
-    # slurm_file_writer.content = [
-    #     'export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch\n',
-    #     'mkdir -p $GAUSS_SCRDIR\n',
-    #     'module load gaussian/g16\n',
-    #     'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
-
-    #     'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-    #     f'fname="{opt_label[:-8]}' + '${RUN_i}.com"\n\n',
-
-    #     'g16 $fname\n',
-    # ]
-    # slurm_file_writer.write_file()
 
     # submit the job
     start_dir = os.getcwd()
