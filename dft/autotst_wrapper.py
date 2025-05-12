@@ -1947,7 +1947,14 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
 
     # copy a run script into the arkane directory
     run_script = os.path.join(arkane_dir, 'run_arkane.sh')
+    base_script = os.path.join(slurm_script_dir, f'species_arkane_{ENVIRONMENT.lower()}.sh')
+    with open(base_script, 'r') as f:
+        base_script_text = f.read()
     with open(run_script, 'w') as f:
+        f.write(base_script_text)
+
+
+with open(run_script, 'w') as f:
         # Run on express
         f.write('#!/bin/bash\n')
         f.write('#SBATCH --partition=express,short,west\n')
