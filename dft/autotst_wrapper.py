@@ -643,7 +643,7 @@ def setup_freq(index, calc_type='species', force_rerun=False):
         reaction.get_label()
         direction = 'forward'
         reaction.ts[direction][0].get_molecules()
-        rmg_species = reaction.ts[direct_ion][0].rmg_molecule
+        rmg_species = reaction.ts[direction][0].rmg_molecule
 
     # write the gaussian calculation file
     gaussian_input_file = os.path.join(freq_dir, 'freq.com')
