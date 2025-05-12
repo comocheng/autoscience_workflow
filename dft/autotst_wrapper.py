@@ -624,7 +624,7 @@ def setup_freq(index, calc_type='species', force_rerun=False):
         conformer_file = get_lowest_valid_conformer(conformer_dir, index, calc_type=calc_type)
         species_log(index, f'Using conformer file {conformer_file}')
     elif calc_type == 'reaction':
-        conformer_file = get_lowest_validts(conformer_dir)
+        conformer_file = get_lowest_valid_ts(conformer_dir)
         reaction_log(index, f'Using conformer file {conformer_file}')
 
     # grab the xyz coordinates from the conformer file and save to xyz file
