@@ -1233,27 +1233,17 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
             fname = os.path.join(rotor_dir, f'{rotor_str}_{i:04}.com')
             write_scan_file(fname, reaction.ts[direction][0], i, freeze_core=True)
 
-        lines = [
-            '#!/bin/bash\n',
-            '#SBATCH --job-name=' + f'rotors_{reaction_index:06}' + '\n',
-            '#SBATCH --partition=short,west\n',
-            '#SBATCH --time=48:00:00\n',
-            '#SBATCH --cpus-per-task=16\n',
-            '#SBATCH --mem-per-cpu=7G\n',
-            '#SBATCH --nodes=1\n',
-            '#SBATCH --exclusive\n',
-            f'#SBATCH --array=0-{n_rotors-1}%20' + '\n\n',
-            'module load gaussian/g16\n',
-            'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
-            'cd ' + rotor_dir + '\n',
-            'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-            'fname="rotor_${RUN_i}.com"\n\n',
-            'g16 $fname\n'
-        ]
         runfile = os.path.join(rotor_dir, f'run.sh')
+        base_script = os.path.join(slurm_script_dir, f'relaxed_ts_rotors_{ENVIRONMENT.lower()}.sh')
+        with open(base_script, 'r') as f:
+            base_script_text = f.read()
+        base_script_text = base_script_text.format(
+            job_name=f'g16_rot_{species_index}',
+            array=f'0-{n_rotors-1}%20',
+            rotor_dir=rotor_dir,
+        )
         with open(runfile, 'w') as f:
-            f.writelines(lines)
-
+            f.write(base_script_text)
     else:
         reaction_log(reaction_index, "Generating piecewise gaussian input files")
 
@@ -1952,15 +1942,6 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
         base_script_text = f.read()
     with open(run_script, 'w') as f:
         f.write(base_script_text)
-
-
-with open(run_script, 'w') as f:
-        # Run on express
-        f.write('#!/bin/bash\n')
-        f.write('#SBATCH --partition=express,short,west\n')
-        f.write('#SBATCH --time=00:20:00\n\n')
-        f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
-
 
 def run_arkane_species(species_index, force_rerun=False):
     # Run the arkane job
