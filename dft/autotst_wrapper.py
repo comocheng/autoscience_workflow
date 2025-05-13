@@ -1928,11 +1928,12 @@ def setup_arkane_species(species_index, include_rotors=True, force_rerun=False):
 
     # copy a run script into the arkane directory
     run_script = os.path.join(arkane_dir, 'run_arkane.sh')
-    base_script = os.path.join(slurm_script_dir, f'species_arkane_{ENVIRONMENT.lower()}.sh')
+    base_script = os.path.join(slurm_script_dir, f'arkane_{ENVIRONMENT.lower()}.sh')
     with open(base_script, 'r') as f:
         base_script_text = f.read()
     with open(run_script, 'w') as f:
         f.write(base_script_text)
+
 
 def run_arkane_species(species_index, force_rerun=False):
     # Run the arkane job
@@ -2593,12 +2594,11 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
 
     # make the slurm script to run arkane
     run_script = os.path.join(arkane_dir, 'run_arkane.sh')
+    base_script = os.path.join(slurm_script_dir, f'arkane_{ENVIRONMENT.lower()}.sh')
+    with open(base_script, 'r') as f:
+        base_script_text = f.read()
     with open(run_script, 'w') as f:
-        # Run on express
-        f.write('#!/bin/bash\n')
-        f.write('#SBATCH --partition=express,short,west\n')
-        f.write('#SBATCH --time=00:20:00\n\n')
-        f.write('python ~/rmg/RMG-Py/Arkane.py input.py\n\n')
+        f.write(base_script_text)
 
     reaction_log(reaction_index, f'finished setting up arkane for reaction {reaction_index} {reaction_label}')
 
