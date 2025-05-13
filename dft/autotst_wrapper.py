@@ -1304,7 +1304,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
                 base_script_text = f.read()
             base_script_text = base_script_text.format(
                 job_name=f'rxn_{reaction_index:06}_rot_{rotor_index:04}',
-                rotor_dir=rotor_dir,
+                rotor_dir=individual_rotor_dir,
                 rotor_index=f'{rotor_index:04}',
             )
             with open(runfile, 'w') as f:
