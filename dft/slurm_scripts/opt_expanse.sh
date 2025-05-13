@@ -6,7 +6,7 @@
 #SBATCH --partition=shared
 #SBATCH --account=nrt112
 #SBATCH --ntasks-per-node=1
-#SBATCH --mem=20Gb
+#SBATCH --mem=100Gb
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --array={array}

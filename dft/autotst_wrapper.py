@@ -68,7 +68,7 @@ try:
 except KeyError:
     DFT_DIR = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft')
 
-MAX_JOBS_RUNNING = 50
+MAX_JOBS_RUNNING = 300
 MAX_N_CONFORMERS = 10
 MAX_JOBS_PER_TASK = 30
 
