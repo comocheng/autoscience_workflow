@@ -8,7 +8,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --account=nrt112
-#SBATCH --array=0-21%5
+#SBATCH --array=0-21
 
 
 module reset
