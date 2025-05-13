@@ -2534,8 +2534,8 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
                 reaction_log(reaction_index, f'cannot file rotor file {rotor_file}. Will try assembling rotor scan energy log')
                 example_rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
                 rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')  # final energy scan file in rotors dir
-
-                outsource_dir = os.path.join('/scratch/harris.se/guassian_scratch/rotor_calcs/', f'reaction_{reaction_index:06}', f'rotor_{i:04}')
+                
+                outsource_dir = os.path.join('/expanse/lustre/projects/nrt112/sharris/dft/rotor_calcs', f'reaction_{reaction_index:06}', f'rotor_{i:04}')
                 outsource_log_file = os.path.join(outsource_dir, f'rotor_{i:04}_0000.log')
                 if os.path.exists(example_rotor_log_file):
                     assemble_rotor_scan_energies(rotor_dir, i)
