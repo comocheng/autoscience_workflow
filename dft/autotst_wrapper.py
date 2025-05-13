@@ -1298,26 +1298,17 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
                 atoms.calc.write_input(atoms, properties=['energy'])
 
             # write the run.sh file
-            lines = [
-                '#!/bin/bash\n',
-                '#SBATCH --job-name=' + f'rxn_{reaction_index:06}_rot_{rotor_index:04}' + '\n',
-                '#SBATCH --partition=short,west\n',
-                '#SBATCH --time=24:00:00\n',
-                '#SBATCH --cpus-per-task=16\n',
-                '#SBATCH --mem-per-cpu=7G\n',
-                '#SBATCH --nodes=1\n',
-                '#SBATCH --exclusive\n',
-                '#SBATCH --array=0-21%5\n\n',
-                'module load gaussian/g16\n',
-                'source /shared/centos7/gaussian/g16/bsd/g16.profile\n\n',
-                'cd ' + individual_rotor_dir + '\n',
-                'RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))\n',
-                'fname="rotor_' + f'{rotor_index:04}' + '_${RUN_i}.com"\n\n',
-                'g16 $fname\n'
-            ]
             runfile = os.path.join(individual_rotor_dir, f'run.sh')
+            base_script = os.path.join(slurm_script_dir, f'unrelaxed_ts_rotors_{ENVIRONMENT.lower()}.sh')
+            with open(base_script, 'r') as f:
+                base_script_text = f.read()
+            base_script_text = base_script_text.format(
+                job_name=f'rxn_{reaction_index:06}_rot_{rotor_index:04}',
+                rotor_dir=rotor_dir,
+                rotor_index=f'{rotor_index:04}',
+            )
             with open(runfile, 'w') as f:
-                f.writelines(lines)
+                f.write(base_script_text)
 
         os.chdir(start_dir)
 
