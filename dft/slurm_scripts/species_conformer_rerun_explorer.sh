@@ -2,11 +2,11 @@
 #SBATCH --job-name={job_name}
 #SBATCH --error=error.log
 #SBATCH --nodes=1
-#SBATCH --partition=west,short
-#SBATCH --exclude=c5003
+#SBATCH --partition=short
+#SBATCH --constrain=cascadelake
 #SBATCH --mem=20Gb
-#SBATCH --time=24:00:00
-#SBATCH --cpus-per-task=16
+#SBATCH --time=48:00:00
+#SBATCH --cpus-per-task=32
 #SBATCH --array={array}
 
 

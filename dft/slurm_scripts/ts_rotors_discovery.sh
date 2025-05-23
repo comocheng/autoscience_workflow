@@ -11,7 +11,7 @@
 module load gaussian/g16
 source /shared/centos7/gaussian/g16/bsd/g16.profile
 
-cd /work/westgroup/harris.se/autoscience/reaction_calculator/dft/kinetics/reaction_000288/rotors
+
 RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))
 fname="rotor_$RUN_i.com"
 

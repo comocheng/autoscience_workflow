@@ -73,7 +73,7 @@ MAX_N_CONFORMERS = 10
 MAX_JOBS_PER_TASK = 30
 
 ENVIRONMENT = os.environ['COMPUTE_ENVIRONMENT']
-assert ENVIRONMENT in ['DISCOVERY', 'EXPANSE']
+assert ENVIRONMENT in ['DISCOVERY', 'EXPANSE', 'EXPLORER']
 slurm_script_dir = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'dft', 'slurm_scripts')
 
 

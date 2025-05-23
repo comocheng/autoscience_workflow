@@ -1,21 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name={job_name}
-#SBATCH --error=error.log
-#SBATCH --nodes=1
-#SBATCH --partition=west,short
-#SBATCH --exclude=c5003
-#SBATCH --mem=20Gb
+#SBATCH --partition=short
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=16
-#SBATCH --array={array}
+#SBATCH --mem-per-cpu=7G
+#SBATCH --nodes=1
+#SBATCH --exclusive
+#SBATCH --array=0-21%5
 
-
-export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
-mkdir -p $GAUSS_SCRDIR
 module load gaussian/g16
 source /shared/EL9/explorer/gaussian/g16-avx2-gpu/g16/bsd/g16.profile
 
+cd {rotor_dir}
 RUN_i=$(printf "%04.0f" $(($SLURM_ARRAY_TASK_ID)))
-fname="conformer_$RUN_i.com"
+fname="rotor_{rotor_index}_$RUN_i.com"
 
 g16 $fname
