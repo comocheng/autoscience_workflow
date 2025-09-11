@@ -55651,3 +55651,22 @@ multiplicity 3
 31 H u0 p0 c0 {5,S}
 32 H u0 p0 c0 {4,S}
 33 H u0 p0 c0 {3,S}"
+2440,,OO[CH]CCCOO,"multiplicity 2
+1  C u0 p0 c0 {2,S} {3,S} {9,S} {10,S}
+2  C u0 p0 c0 {1,S} {4,S} {11,S} {12,S}
+3  C u0 p0 c0 {1,S} {5,S} {13,S} {14,S}
+4  C u1 p0 c0 {2,S} {6,S} {15,S}
+5  O u0 p2 c0 {3,S} {7,S}
+6  O u0 p2 c0 {4,S} {8,S}
+7  O u0 p2 c0 {5,S} {17,S}
+8  O u0 p2 c0 {6,S} {16,S}
+9  H u0 p0 c0 {1,S}
+10 H u0 p0 c0 {1,S}
+11 H u0 p0 c0 {2,S}
+12 H u0 p0 c0 {2,S}
+13 H u0 p0 c0 {3,S}
+14 H u0 p0 c0 {3,S}
+15 H u0 p0 c0 {4,S}
+16 H u0 p0 c0 {8,S}
+17 H u0 p0 c0 {7,S}
+"
