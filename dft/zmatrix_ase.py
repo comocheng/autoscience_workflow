@@ -9,9 +9,13 @@ import numpy as np
 from simtk import unit
 
 
-def get_atom_ranks(atoms):
+def get_atom_ranks(atoms, cutoff_multiplier=1.0):
     # an approximation of rdkit's Chem.CanonicalRankAtoms(rdmol, breakTies=False)
-    geo_analysis = ase.geometry.analysis.Analysis(atoms)
+    my_cutoffs = ase.neighborlist.natural_cutoffs(atoms, cutoff_multiplier)
+    neighbor_list = ase.neighborlist.NeighborList(cutoffs=my_cutoffs)
+    neighbor_list.update(atoms)
+
+    geo_analysis = ase.geometry.analysis.Analysis(atoms, nl=neighbor_list)
     atomic_numbers = atoms.get_atomic_numbers()
     n_bonds = [len(i) for i in geo_analysis.all_bonds[0]]
     sum_nearest_neighbor_bonds = np.zeros(len(atomic_numbers))
@@ -67,16 +71,21 @@ class ZMatrix(object):
     # and radians for angles. However, the output of the zmatrix is degree
     # instead of radian, since most QC programs use it.
 
-    def __init__(self, atoms, root_atm_idx=0):
+    # cutoff multiplier is multiplier to apply to bond length cutoff for geometric analysis
+
+    def __init__(self, atoms, root_atm_idx=0, cutoff_multiplier=1.0):
 
         assert root_atm_idx < len(atoms), "root_atm_idx must be 0 < root_atm_idx < N_atms"
 
         self.atoms = atoms
-        self.analysis = ase.geometry.analysis.Analysis(atoms)
+        my_cutoffs = ase.neighborlist.natural_cutoffs(atoms, cutoff_multiplier)
+        neighbor_list = ase.neighborlist.NeighborList(cutoffs=my_cutoffs)
+        neighbor_list.update(atoms)
+        self.analysis = ase.geometry.analysis.Analysis(atoms, nl=neighbor_list)
         self.ordered_atom_list = [None] * len(atoms)
         self.z = dict()
         self.N_atms = 0
-        self.rank = get_atom_ranks(atoms)
+        self.rank = get_atom_ranks(atoms, cutoff_multiplier=cutoff_multiplier)
         self.n_non_deadends = 0
 
         self.add_atom(root_atm_idx)
@@ -87,6 +96,8 @@ class ZMatrix(object):
         return self.ordered_atom_list[z_idx]
 
     def a2z(self, atm_idx):
+        if atm_idx not in self.ordered_atom_list:
+            print('not included: ', self.ordered_atom_list)
         return self.ordered_atom_list.index(atm_idx)
 
     def zzit(self):

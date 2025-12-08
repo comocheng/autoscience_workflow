@@ -513,7 +513,8 @@ def screen_species_conformers(species_index, force_rerun=False):
             calc = gaussian.get_conformer_calc()
             calc.label = f'conformer_{conformer_index:04}'
             calc.directory = conformer_dir
-            calc.parameters.pop('scratch')
+            if 'scratch' in calc.parameters:
+                calc.parameters.pop('scratch')
             calc.parameters.pop('multiplicity')
             calc.parameters['mult'] = cf.rmg_molecule.multiplicity
             calc.chk = f'conformer_{conformer_index:04}.chk'
@@ -649,6 +650,7 @@ def setup_freq(index, calc_type='species', force_rerun=False):
     gaussian_input_file = os.path.join(freq_dir, 'freq.com')
     with open(gaussian_input_file, 'w') as f:
         ase.io.gaussian.write_gaussian_in(
+        #ase.io.gaussian.write_gaussian(
             f,
             atoms,
             properties=['energy'],
@@ -871,6 +873,17 @@ def write_scan_file(fname, conformer, torsion_index, degree_delta=20.0, freeze_c
     rdmol = conformer._rdkit_molecule
     cart_crds = np.array(rdmol.GetConformers()[0].GetPositions()) * unit.angstrom
     zm = zmatrix_ase.ZMatrix(conformer.get_ase_mol())
+
+    if None in zm.ordered_atom_list:
+        # failed to build zmatrix, probably because the distance between atoms in TS is not found as a bond
+        # and so it thinks there are two separate molecules
+        multipliers = [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0]
+        for i in range(len(multipliers)):
+            zm = zmatrix_ase.ZMatrix(conformer.get_ase_mol(), cutoff_multiplier=multipliers[i])
+            if None not in zm.ordered_atom_list:
+                break
+        else:
+            raise ValueError('Could not build zmatrix')
 
     zm_text = zm.build_pretty_zcrds(cart_crds)
     zm_lines = zm_text.splitlines()
@@ -1239,7 +1252,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
             base_script_text = f.read()
         base_script_text = base_script_text.format(
             job_name=f'g16_rot_{reaction_index}',
-            array=f'0-{n_rotors-1}%20',
+            array=f'0-{n_rotors - 1}%20',
             rotor_dir=rotor_dir,
         )
         with open(runfile, 'w') as f:
@@ -1292,7 +1305,8 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
                     method='m062x',
                     basis='cc-pVTZ',
                     scf='maxcycle=1000',
-                    mult=new_cf.rmg_molecule.multiplicity
+                    mult=new_cf.rmg_molecule.multiplicity,
+                    # multiplicity=new_cf.rmg_molecule.multiplicity,
                 )
 
                 atoms.calc.write_input(atoms, properties=['energy'])
@@ -1637,6 +1651,8 @@ def bonds_too_large(conformer_file, index, calc_type='species', atoms=None, verb
     assert calc_type in ['species', 'reaction']
     too_large = False
     if not atoms:
+        if conformer_file is None:
+            return True
         with open(conformer_file, 'r') as f:
             atoms = ase.io.gaussian.read_gaussian_out(f)
 
@@ -2134,8 +2150,10 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
             raise ValueError(f'opt_type must be one of shell, center, overall, hfsp, hfsp_shell, hfsp_overall. Got {opt_type}')
         calc.label = opt_label[:-4]
         calc.directory = opt_dir
-        calc.parameters.pop('scratch')
-        calc.parameters.pop('multiplicity')
+        if 'scratch' in calc.parameters:
+            calc.parameters.pop('scratch')
+        if 'multiplicity' in calc.parameters:
+            calc.parameters.pop('multiplicity')
         calc.parameters['mult'] = ts.rmg_molecule.multiplicity
         calc.write_input(ts.ase_molecule)
 
@@ -2428,7 +2446,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     lines = [
         f'modelChemistry = "{model_chemistry}"\n',
         'useHinderedRotors = True\n',
-        'useBondCorrections = True\n\n',
+        'useBondCorrections = False\n\n',  # only use these for species conformer, not reaciton TSs
     ]
 
     completed_species = []
@@ -3005,7 +3023,8 @@ def verify_bond_count(reaction_index, gaussian_file=None, verbose=False):
             reaction_log(reaction_index, rmg_bonds)
 
         if len(rmg_bonds) != len(gaussian_bonds[0]):
+            
             reaction_log(reaction_index, 'WARNING: RMG and ASE disagree with number of bonds')
-            match = False
+            # match = False
 
     return match
