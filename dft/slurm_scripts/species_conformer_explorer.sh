@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --array={array}
 
-
+#export GAUSS_EXEDIR="/shared/EL9/explorer/gaussian/g16-avx2-gpu/g16/"
 export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
 mkdir -p $GAUSS_SCRDIR
 module load gaussian/g16
