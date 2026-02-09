@@ -13,8 +13,6 @@ def run_quicksim(species_list, reaction_list, T=830, P=10.0 * ct.one_atm, X=None
 
     # convert to cantera
     subprocess.run(['ck2yaml', '--input=temp.inp', '--output=temp.yaml'])
-
-    print(f'Running quicksim with T={T}, P={P}, X={X}')
     gas = ct.Solution('temp.yaml')
     if X is None:
         X = {
@@ -22,6 +20,7 @@ def run_quicksim(species_list, reaction_list, T=830, P=10.0 * ct.one_atm, X=None
             'butane(1)': 0.03135,
             'N2': 0.7649,
         }
+    print(f'Running quicksim with T={T}, P={P}, X={X}')
     gas.TPX = T, P, X
     t_end = 10.0  # time in seconds
           
