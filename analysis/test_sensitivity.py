@@ -113,6 +113,35 @@ plt.xlim([1e-3, 1.0])
 plt.legend()
 # -
 
-gas.species_names.index('OH')
+# # Test perturb kinetics
+
+# +
+# Plot results of changing a reaction
+gas = ct.Solution('gri30.yaml')
+
+T = 1000
+P = ct.one_atm * 10.0
+X = 'CH4: 0.2, O2: 0.2, AR: 0.6'
+
+reaction_index = 52
+
+times, temperatures, pressures, concs, rates = simulation.run_full_simulation(gas, T, P, X)
+plt.plot(times, concs[:, species_index], label='Before')
+
+
+gas.set_multiplier(1e-6, reaction_index)
+times, temperatures, pressures, concs, rates = simulation.run_full_simulation(gas, T, P, X)
+plt.plot(times, concs[:, species_index], label='After', linestyle='dashed')
+
+
+gas.set_multiplier(1.0, reaction_index)
+
+
+plt.xlabel('time (s)')
+plt.ylabel('OH Concentration')
+plt.xscale('log')
+plt.xlim([1e-3, 1.0])
+plt.legend()
+# -
 
 

@@ -4,6 +4,23 @@ import numpy as np
 import logging
 
 
+def perturb_species(species, DELTA_J_MOL=418.4):
+    # takes in a Cantera species and makes a copy with the enthalpy offset changed
+    # Default of 418 J/mol equals 0.1 kcal/mol
+    R = 8.3144598  # gas constant in J/mol
+
+    # copy the species
+    input_data = species.input_data.copy()
+    increase = None
+    for i in range(len(input_data['thermo']['data'])):
+        if not increase:
+            # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
+            increase = DELTA_J_MOL / R
+        input_data['thermo']['data'][i][5] += increase
+    new_species = ct.Species().from_dict(input_data)
+    return new_species
+
+
 def run_simulation_for_delay(gas, T_orig, P_orig, X_orig, t_end=1.0, MAX_STEPS=10000):
     """Run an ignition-delay simulation for a single initial condition.
     Args:
