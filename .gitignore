@@ -147,3 +147,6 @@ dmypy.json
 dft/kinetics/reaction*
 dft/thermo
 
+scratch.ipynb
+util/new
+util/output.py
