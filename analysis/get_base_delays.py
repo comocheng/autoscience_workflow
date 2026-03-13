@@ -1,4 +1,6 @@
 # script to save a .npy with base delays for each of the tables across given base conditions
+# first argument is chemkin (or cantera) file, second argument is optional path to sim_config.yaml (if not given, will look in same dir as mech file)
+
 
 import os
 import sys
@@ -14,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 
 # load chemkin file and assume a certain directory structure to get the yaml file and the experimental conditions
 chemkin = sys.argv[1]
+
 mech_yaml = chemkin.replace('.inp', '.yaml')
 if os.path.basename(mech_yaml) != 'chem_annotated.yaml':
     logging.warning(f'Expected mech yaml to be named chem_annotated.yaml but got {mech_yaml}. Proceed with caution!')
@@ -26,11 +29,14 @@ os.makedirs(results_dir, exist_ok=True)
 save_path = os.path.join(results_dir, f'base_delays.npy')
 gas = ct.Solution(mech_yaml)
 
-conditions_dict_path = os.path.join(working_dir, 'sim_config.yaml')
-# conditions_dict_path = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'butane1.yaml')
-if not os.path.exists(conditions_dict_path):
-    logging.warning(f'Expected to find sim_config.yaml at {conditions_dict_path} but it does not exist. Please copy it to the directory with your mech file.')
-    raise FileNotFoundError(f'sim_config.yaml not found at {conditions_dict_path}')
+if len(sys.argv) > 2:
+    conditions_dict_path = sys.argv[2]
+else:
+    conditions_dict_path = os.path.join(working_dir, 'sim_config.yaml')
+    # conditions_dict_path = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'butane1.yaml')
+    if not os.path.exists(conditions_dict_path):
+        logging.warning(f'Expected to find sim_config.yaml at {conditions_dict_path} but it does not exist. Please copy it to the directory with your mech file.')
+        raise FileNotFoundError(f'sim_config.yaml not found at {conditions_dict_path}')
 
 with open(conditions_dict_path) as f:
     conditions_dict = yaml.safe_load(f)
