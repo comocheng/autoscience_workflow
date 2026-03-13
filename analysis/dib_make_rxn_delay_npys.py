@@ -8,6 +8,8 @@ import concurrent.futures
 import rmgpy.chemkin
 import subprocess
 
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'analysis'))
+import ignition_delay
 
 chemkin = sys.argv[1]
 aramco = False
@@ -172,14 +174,16 @@ def run_simulation(T_orig, P_orig, X_orig):
                 # return 0
 
         if not failed:
-            slopes = np.gradient(P, times)
-            delay_i = np.argmax(slopes)
-            return times[delay_i]
+            # slopes = np.gradient(P, times)
+            # delay_i = np.argmax(slopes)
+            # return times[delay_i]
+            delay1, delay2, max_pressure_rise_time, maxP_logtime, valid_ignition = ignition_delay.get_ignition_delays(times, P)
+            return (delay1, delay2, max_pressure_rise_time, maxP_logtime, valid_ignition)
         print(f'trying again {attempt_index}')
 
     print('Reactor failed to solve after many attempts!')
     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-    return 0
+    return (0, 0, 0, 0, False)
 
 
 ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'dib_ignition_delay.csv')
@@ -191,7 +195,7 @@ ref_table = df_exp[df_exp['Table'] == 24]
 # Define Initial conditions using experimental data
 taus = ref_table['Time (ms)'].values.astype(float)  # ignition delay
 Ts = ref_table['T (K)'].values  # Temperatures
-Ps = ref_table['Pressure (bar)'].values * 1e5 / ct.one_atm  # pressures in atm
+Ps = ref_table['Pressure (bar)'].values * 1e5  # pressures in Pa
 phi = ref_table['Phi'].values[0]
 
 # list of starting conditions
@@ -221,8 +225,7 @@ def same_reaction(rxn1, rxn2):
 
 
 # compute and save the delays
-species_delays = np.zeros((len(perturbed_gas.species()), len(temperatures)))
-reaction_delays = np.zeros((len(perturbed_gas.reactions()), len(temperatures)))
+reaction_delays = np.zeros((len(perturbed_gas.reactions()), len(temperatures), 5))
 
 for i in range(rxn_index_start, min(rxn_index_start + REACTIONS_PER_FILE, len(perturbed_gas.reactions()))):
     print(f'perturbing {i} {perturbed_gas.reactions()[i]}')
@@ -248,7 +251,7 @@ for i in range(rxn_index_start, min(rxn_index_start + REACTIONS_PER_FILE, len(pe
     base_gas.modify_reaction(i, perturbed_gas.reactions()[perturbed_index])
 
     # Run all simulations in parallel
-    delays = np.zeros(len(temperatures))
+    delays = np.zeros((len(temperatures), 5))
     condition_indices = np.arange(0, len(temperatures))
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
@@ -258,8 +261,13 @@ for i in range(rxn_index_start, min(rxn_index_start + REACTIONS_PER_FILE, len(pe
             [Ps[0] for j in condition_indices],
             [concentrations[0] for j in condition_indices]
         )):
-            delays[condition_index] = delay_time
-    reaction_delays[i, :] = delays
+            delays[condition_index, 0] = delay_time[0]  # 2nd-stage delay
+            delays[condition_index, 1] = delay_time[1]  # 1st-stage delay
+            delays[condition_index, 2] = delay_time[2]  # time of maximum pressure rise
+            delays[condition_index, 3] = delay_time[3]  # max pressure logtime
+            delays[condition_index, 4] = delay_time[4]  # valid ignition?
+    reaction_delays[i, :, :] = delays
+    
 
 # save the result as a numpy thing
 np.save(output_reaction_delays_file, reaction_delays)

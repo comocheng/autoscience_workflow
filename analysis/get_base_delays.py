@@ -6,7 +6,6 @@ import cantera as ct
 import numpy as np
 import pandas as pd
 import concurrent.futures
-import rmgpy.chemkin
 import subprocess
 
 
@@ -21,7 +20,7 @@ working_dir = os.path.join(os.path.dirname(chemkin))
 # species_dict = os.path.join(working_dir, 'species_dictionary.txt')
 # species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
 # print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
-base_yaml_path = os.path.join(working_dir, 'base.yaml')
+base_yaml_path = os.path.join(working_dir, 'chem_annotated.yaml')
 
 assert os.path.exists(base_yaml_path)
 
@@ -98,7 +97,7 @@ table_exp = df_exp[df_exp['Table'] == experimental_table_index]
 # Define Initial conditions using experimental data
 tau_exp = table_exp['time (ms)'].values.astype(float)  # ignition delay
 T7 = table_exp['T_C'].values  # Temperatures
-P7 = table_exp['nominal pressure(atm)'].values * ct.one_atm  # pressures in atm
+P7 = table_exp['nominal pressure(atm)'].values * ct.one_atm  # pressures in Pa
 phi7 = table_exp['phi'].values  # equivalence ratios
 # list of starting conditions
 # Mixture compositions taken from table 2 of

@@ -9,6 +9,9 @@ import concurrent.futures
 import rmgpy.chemkin
 import subprocess
 
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'analysis'))
+import ignition_delay
+
 
 # get the table index from input for easy parallelization
 chemkin = sys.argv[1]
@@ -81,14 +84,17 @@ def run_simulation(T_orig, P_orig, X_orig):
                 # return 0
 
         if not failed:
-            slopes = np.gradient(P, times)
-            delay_i = np.argmax(slopes)
-            return times[delay_i]
+            delay1, delay2, max_pressure_rise_time, max_pressure_rise_logtime, valid_ignition = ignition_delay.get_ignition_delays(times, P)
+            return (delay1, delay2, max_pressure_rise_time, max_pressure_rise_logtime, valid_ignition)
+
+            # slopes = np.gradient(P, times)
+            # delay_i = np.argmax(slopes)
+            # return times[delay_i]
         print(f'trying again {attempt_index}')
 
     print('Reactor failed to solve after many attempts!')
     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-    return 0
+    return (0, 0, 0, 0, False)
 
 
 ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'dib_ignition_delay.csv')
@@ -100,7 +106,7 @@ ref_table = df_exp[df_exp['Table'] == 24]
 # Define Initial conditions using experimental data
 taus = ref_table['Time (ms)'].values.astype(float)  # ignition delay
 Ts = ref_table['T (K)'].values  # Temperatures
-Ps = ref_table['Pressure (bar)'].values * 1e5 / ct.one_atm  # pressures in atm
+Ps = ref_table['Pressure (bar)'].values * 1e5  # pressures in Pa
 phi = ref_table['Phi'].values[0]
 
 # list of starting conditions
@@ -130,7 +136,7 @@ def same_reaction(rxn1, rxn2):
 
 
 # compute and save the delays
-base_delays = np.zeros(len(temperatures))
+base_delays = np.zeros((len(temperatures), 5))
 
 # save the result as a pandas dataframe
 table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
@@ -147,7 +153,11 @@ with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
         [Ps[0] for j in condition_indices],
         [concentrations[0] for j in condition_indices]
     )):
-        base_delays[condition_index] = delay_time
+        base_delays[condition_index, 0] = delay_time[0]  # 2nd-stage delay
+        base_delays[condition_index, 1] = delay_time[1]  # 1st-stage delay
+        base_delays[condition_index, 2] = delay_time[2]  # time of maximum pressure rise
+        base_delays[condition_index, 3] = delay_time[3]  # time of maximum pressure rise using logtimes
+        base_delays[condition_index, 4] = delay_time[4]  # valid ignition?
 
 
 # save the result as a numpy thing

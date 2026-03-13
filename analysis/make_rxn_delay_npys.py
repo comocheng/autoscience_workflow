@@ -9,16 +9,22 @@ import rmgpy.chemkin
 import subprocess
 
 
-# get the table index from input for easy parallelization
-
 chemkin = sys.argv[1]
 aramco = False
 experimental_table_index = int(sys.argv[2])
 
-
 rxn_index_start = int(sys.argv[3])
 
+REACTIONS_PER_FILE = int(sys.argv[4])
+
+
 working_dir = os.path.join(os.path.dirname(chemkin))
+table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
+output_reaction_delays_file = os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}_{rxn_index_start:04}.npy')
+if os.path.exists(output_reaction_delays_file):
+    print(f'Skipping reaction sensitivity start {rxn_index_start} because file already exists!')
+    exit(0)
+os.makedirs(table_dir, exist_ok=True)
 
 
 # perturb every species and reaction in the mechanism
@@ -279,12 +285,8 @@ def same_reaction(rxn1, rxn2):
 species_delays = np.zeros((len(perturbed_gas.species()), len(temperatures)))
 reaction_delays = np.zeros((len(perturbed_gas.reactions()), len(temperatures)))
 
-table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
-os.makedirs(table_dir, exist_ok=True)
-
-for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reactions()))):
+for i in range(rxn_index_start, min(rxn_index_start + REACTIONS_PER_FILE, len(perturbed_gas.reactions()))):
     print(f'perturbing {i} {perturbed_gas.reactions()[i]}')
-    # TODO skip the ones that haven't actually been perturbed because PDEP or whatever
     try:
         a = base_gas.reactions()[i].rate
     except AttributeError:
@@ -321,4 +323,4 @@ for i in range(rxn_index_start, min(rxn_index_start + 50, len(perturbed_gas.reac
     reaction_delays[i, :] = delays
 
 # save the result as a numpy thing
-np.save(os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}_{rxn_index_start:04}.npy'), reaction_delays)
+np.save(output_reaction_delays_file, reaction_delays)

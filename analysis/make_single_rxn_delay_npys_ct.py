@@ -4,61 +4,37 @@ import time
 import cantera as ct
 import numpy as np
 import pandas as pd
-
-
-N_Temps = 51
-
-
-def perturb_species(species):  # TODO maybe load this from a util Python module so code doesn't get repeated so much
-    # takes in an RMG species object
-    # change the enthalpy offset
-    DELTA_J_MOL = 418.4  # J/mol, but equals 0.1 kcal/mol
-    R = 8.3144598  # gas constant in J/mol
-    DELTA = 0.01
-
-    # copy the species
-    input_data = species.input_data
-    increase = None
-    for i in range(len(input_data['thermo']['data'])):
-        if not increase:
-            # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
-            # increase = DELTA * new_coeffs[5]
-            increase = DELTA_J_MOL / R
-        input_data['thermo']['data'][i][5] += increase
-    new_species = ct.Species().from_dict(input_data)
-    return new_species
+import concurrent.futures
+import subprocess
 
 
 chemkin = sys.argv[1]
-species_index = int(sys.argv[2])
-aramco = 'aramco' in chemkin.lower()
+reaction_index = int(sys.argv[2])
+aramco = False
+experimental_table_index = 7
 
+N_Temps = 51
 working_dir = os.path.join(os.path.dirname(chemkin))
-experimental_table_index = 7  # workflow only requires calculating it here
 table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
-spec_delay_file = os.path.join(table_dir, f'spec_delay_{experimental_table_index:04}_{species_index:04}.npy')
-if os.path.exists(spec_delay_file):
-    print(f'Skipping {species_index} because file already exists!')
+output_reaction_delays_file = os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}_{reaction_index:04}.npy')
+if os.path.exists(output_reaction_delays_file):
+    print(f'Skipping reaction sensitivity {reaction_index} because file already exists!')
     exit(0)
 os.makedirs(table_dir, exist_ok=True)
 
-base_yaml_path = os.path.join(working_dir, 'chem_annotated.yaml')
-gas = ct.Solution(base_yaml_path)
-if species_index >= len(gas.species()):
-    print(f'Skipping species {species_index} because not in model')
-    exit(-1)
 
-# perturb the species
-sp_copy = ct.Species().from_dict(gas.species()[species_index].input_data)
-perturbed_species = perturb_species(gas.species()[species_index])
-gas.modify_species(species_index, perturbed_species)
+base_yaml_path = os.path.join(working_dir, 'chem_annotated.yaml')
+
+
+# load the 2 ctis
+base_gas = ct.Solution(base_yaml_path)
 
 
 # Take Reactor Conditions from Table 7 of supplementary info in
 # https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
-# def run_simulation(yaml_file, species_index, T_orig, P_orig, X_orig):
 def run_simulation(T_orig, P_orig, X_orig):
-    t_end = 1.0  # time in seconds
+    # function to run a RCM simulation
+
     atols = [1e-15, 1e-15, 1e-18]
     rtols = [1e-9, 1e-12, 1e-15]
     for attempt_index in range(0, len(atols)):
@@ -66,9 +42,11 @@ def run_simulation(T_orig, P_orig, X_orig):
         P = P_orig
         X = X_orig
 
-        gas.TPX = T, P, X
+        # gas is a global object
+        t_end = 1.0  # time in seconds
+        base_gas.TPX = T, P, X
 
-        reactor = ct.IdealGasReactor(gas)
+        reactor = ct.IdealGasReactor(base_gas)
         reactor_net = ct.ReactorNet([reactor])
         reactor_net.atol = atols[attempt_index]
         reactor_net.rtol = rtols[attempt_index]
@@ -76,10 +54,10 @@ def run_simulation(T_orig, P_orig, X_orig):
         times = [0]
         T = [reactor.T]
         P = [reactor.thermo.P]
+        X = [reactor.thermo.X]  # mol fractions
         MAX_STEPS = 10000
         step_count = 0
         failed = False
-        print(f'starting sim T={T}K')
         while reactor_net.time < t_end:
             try:
                 reactor_net.step()
@@ -93,6 +71,7 @@ def run_simulation(T_orig, P_orig, X_orig):
             times.append(reactor_net.time)
             T.append(reactor.T)
             P.append(reactor.thermo.P)
+            X.append(reactor.thermo.X)
 
             step_count += 1
             if step_count > MAX_STEPS:
@@ -197,20 +176,31 @@ else:
         conc_dict['CO2'] = x_CO2
         concentrations.append(conc_dict)
 
-
 # just use the first concentration
 Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
 Tmin = 663
 # N = 51
 temperatures = np.linspace(Tmin, Tmax, N_Temps)
 
-# Run all simulations serially because Cantera has issues with multiprocessing-- it doesn't actually speed things up
-# https://groups.google.com/g/cantera-users/c/q_eUU6r0j_M/m/26F1IC-qAwAJ
+
+# compute and save the delays
+species_delays = np.zeros((len(base_gas.species()), len(temperatures)))
+reaction_delays = np.zeros((len(base_gas.reactions()), len(temperatures)))
+print(f'perturbing {reaction_index} {base_gas.reactions()[reaction_index]}')
+
+# load the base gas
+# base_gas = ct.Solution(base_yaml_path)
+base_gas.set_multiplier(1.1, reaction_index)
+
+# Run all simulations in serial because it's faster than parallel
 delays = np.zeros(len(temperatures))
 condition_indices = np.arange(0, len(temperatures))
 
-for condition_index in condition_indices:
-    print(condition_index)
+for condition_index in range(len(condition_indices)):
     delays[condition_index] = run_simulation(temperatures[condition_index], P7[0], concentrations[0])
 
-np.save(spec_delay_file, delays)
+reaction_delays[reaction_index, :] = delays
+
+
+# save the result as a numpy thing
+np.save(output_reaction_delays_file, reaction_delays)

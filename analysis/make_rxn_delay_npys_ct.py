@@ -15,7 +15,8 @@ experimental_table_index = int(sys.argv[2])
 rxn_index_start = int(sys.argv[3])
 
 REACTIONS_PER_FILE = int(sys.argv[4])
-
+N_Temps = 51
+#N_Temps = 10
 working_dir = os.path.join(os.path.dirname(chemkin))
 table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
 output_reaction_delays_file = os.path.join(table_dir, f'reaction_delays_{experimental_table_index:04}_{rxn_index_start:04}.npy')
@@ -181,8 +182,8 @@ else:
 # just use the first concentration
 Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
 Tmin = 663
-N = 51
-temperatures = np.linspace(Tmin, Tmax, N)
+# N = 51
+temperatures = np.linspace(Tmin, Tmax, N_Temps)
 
 
 # compute and save the delays

@@ -83,7 +83,7 @@ total_uncertainty_mat = np.repeat(np.transpose(np.matrix(total_uncertainty_array
 
 # create matrix of DFT errors
 # will later subtract this from actual error to see if DFT is expected to improve model
-SPECIES_DFT_ERROR = 3.0
+SPECIES_DFT_ERROR = 1.5
 REACTION_DFT_ERROR = 1 / np.sqrt(3) * np.log(10)
 sp_dft_uncertainty_mat = np.ones((N, 12 * 51)) * SPECIES_DFT_ERROR
 rxn_dft_uncertainty_mat = np.ones((M, 12 * 51)) * REACTION_DFT_ERROR
@@ -313,7 +313,7 @@ for i in range(0, 200):
         # it's a species
         mech_summary.loc[i] = [
             i,
-            ct_index,
+            database_fun.get_unique_species_index(species_list[ct_index]),
             str(database_fun.index2species(ct_index)),
             'species',
             1,

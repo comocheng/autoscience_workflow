@@ -8,6 +8,8 @@ import concurrent.futures
 import rmgpy.chemkin
 import subprocess
 
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'analysis'))
+import ignition_delay
 
 # get the table index from input for easy parallelization
 DELTA_J_MOL = 418.4  # J/mol, but equals 0.1 kcal/mol
@@ -174,20 +176,20 @@ def run_simulation(T_orig, P_orig, X_orig):
             step_count += 1
             if step_count > MAX_STEPS:
                 print(f'Too many steps! Reactor failed to solve! {attempt_index}')
-                # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
                 failed = True
                 break
-                # return 0
 
         if not failed:
-            slopes = np.gradient(P, times)
-            delay_i = np.argmax(slopes)
-            return times[delay_i]
+            delay1, delay2, max_pressure_rise_time, max_P_logtime, valid_ignition = ignition_delay.get_ignition_delays(times, P)
+            return (delay1, delay2, max_pressure_rise_time, max_P_logtime, valid_ignition)
+            # slopes = np.gradient(P, times)
+            # delay_i = np.argmax(slopes)
+            # return times[delay_i]
         print(f'trying again {attempt_index}')
 
     print('Reactor failed to solve after many attempts!')
     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-    return 0
+    return (0, 0, 0, 0, False)
 
 
 # Load the experimental conditions
@@ -200,7 +202,7 @@ ref_table = df_exp[df_exp['Table'] == 24]
 # Define Initial conditions using experimental data
 taus = ref_table['Time (ms)'].values.astype(float)  # ignition delay
 Ts = ref_table['T (K)'].values  # Temperatures
-Ps = ref_table['Pressure (bar)'].values * 1e5 / ct.one_atm  # pressures in atm
+Ps = ref_table['Pressure (bar)'].values * 1e5  # pressures in Pa
 phi = ref_table['Phi'].values[0]
 
 # list of starting conditions
@@ -233,7 +235,7 @@ base_gas = ct.Solution(base_yaml_path)
 base_gas.modify_species(sp_index, perturbed_gas.species()[sp_index])
 
 # Run all simulations in parallel
-delays = np.zeros(len(temperatures))
+delays = np.zeros((len(temperatures), 5))
 condition_indices = np.arange(0, len(temperatures))
 
 with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
@@ -243,6 +245,10 @@ with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
         [Ps[0] for j in condition_indices],
         [concentrations[0] for j in condition_indices]
     )):
-        delays[condition_index] = delay_time
+        delays[condition_index, 0] = delay_time[0]  # 2nd-stage delay
+        delays[condition_index, 1] = delay_time[1]  # 1st-stage delay
+        delays[condition_index, 2] = delay_time[2]  # time of maximum pressure rise
+        delays[condition_index, 3] = delay_time[3]  # time of maximum pressure rise logtim
+        delays[condition_index, 4] = delay_time[4]  # valid ignition?
 
 np.save(spec_delay_file, delays)

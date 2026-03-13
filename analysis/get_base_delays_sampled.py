@@ -1,5 +1,4 @@
-# script to get the ignition delays at the experimental conditions for a given cantera input yaml
-# and save the results as a .npy in the same place
+# script to save a .npy with base delays for each of the tables across all 51 conditions
 
 import os
 import sys
@@ -7,25 +6,27 @@ import cantera as ct
 import numpy as np
 import pandas as pd
 import concurrent.futures
+import rmgpy.chemkin
 import subprocess
 
 
 # get the table index from input for easy parallelization
-cantera = sys.argv[1]
-if cantera.endswith('.inp'):
-    cantera = cantera[:-4] + '.yaml'
-tokens = os.path.splitext(cantera)
-out_npy_file = tokens[0] + '.npy'
+chemkin = sys.argv[1]
 
+experimental_table_index = int(sys.argv[2])
 
-experimental_table_index = 7
+working_dir = os.path.join(os.path.dirname(chemkin))
 
-working_dir = os.path.join(os.path.dirname(cantera))
+# transport = os.path.join(working_dir, 'tran.dat')
+# species_dict = os.path.join(working_dir, 'species_dictionary.txt')
+# species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport)
+# print(f'Loaded {len(species_list)} species, {len(reaction_list)} reactions')
+base_yaml_path = os.path.join(working_dir, 'base.yaml')
 
+assert os.path.exists(base_yaml_path)
 
-assert os.path.exists(cantera)
-
-base_gas = ct.Solution(cantera)
+# load the 2 ctis
+base_gas = ct.Solution(base_yaml_path)
 
 
 # Take Reactor Conditions from Table 7 of supplementary info in
@@ -36,12 +37,12 @@ def run_simulation(T_orig, P_orig, X_orig):
     atols = [1e-15, 1e-15, 1e-18]
     rtols = [1e-9, 1e-12, 1e-15]
     for attempt_index in range(0, len(atols)):
-        T = T_orig
+        T = T_orig + np.random.random() * 1e-4
         P = P_orig
         X = X_orig
 
         # gas is a global object
-        t_end = 10.0  # time in seconds
+        t_end = 1.0  # time in seconds
         base_gas.TPX = T, P, X
 
         reactor = ct.IdealGasReactor(base_gas)
@@ -92,12 +93,13 @@ def run_simulation(T_orig, P_orig, X_orig):
 
 # Load the experimental conditions
 ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'butane_ignition_delay.csv')
+
 df_exp = pd.read_csv(ignition_delay_data)
 table_exp = df_exp[df_exp['Table'] == experimental_table_index]
 # Define Initial conditions using experimental data
 tau_exp = table_exp['time (ms)'].values.astype(float)  # ignition delay
 T7 = table_exp['T_C'].values  # Temperatures
-P7 = table_exp['nominal pressure(atm)'].values * ct.one_atm  # pressures in Pa
+P7 = table_exp['nominal pressure(atm)'].values * ct.one_atm  # pressures in atm
 phi7 = table_exp['phi'].values  # equivalence ratios
 # list of starting conditions
 # Mixture compositions taken from table 2 of
@@ -132,7 +134,7 @@ elif phi7[0] == 2.0:
 else:
     raise ValueError
 
-if 'aramco' in cantera.lower():
+if 'aramco' in chemkin.lower():
     o2_conc = conc_dict.pop('O2(2)')
     conc_dict['O2'] = o2_conc
 
@@ -146,27 +148,42 @@ for i in range(0, len(table_exp)):
     x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
     conc_dict['N2'] = x_N2
     conc_dict['Ar'] = x_Ar
-    if 'aramco' in cantera.lower():
+    if 'aramco' in chemkin.lower():
         conc_dict['CO2'] = x_CO2
     else:
         conc_dict['CO2(7)'] = x_CO2
     concentrations.append(conc_dict)
 
+# just use the first concentration
+Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
+Tmin = 663
+N = 51
+temperatures = np.linspace(Tmin, Tmax, N)
+
 
 # compute and save the delays
-base_delays = np.zeros(len(T7))
+base_delays = np.zeros(len(temperatures))
 
-# Run all simulations in parallel
-condition_indices = np.arange(0, len(T7))
+# save the result as a pandas dataframe
+table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
+os.makedirs(table_dir, exist_ok=True)
 
-with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
-    for condition_index, delay_time in zip(condition_indices, executor.map(
-        run_simulation,
-        [T7[j] for j in condition_indices],
-        [P7[j] for j in condition_indices],
-        [concentrations[0] for j in condition_indices]
-    )):
-        base_delays[condition_index] = delay_time
 
-# save the result as a numpy thing
-np.save(out_npy_file, base_delays)
+for m in range(7):
+    np.random.seed(420 + m)
+    result_name = f'base_delays_{experimental_table_index:04}_{m:04}.npy'
+
+    # Run all simulations in parallel
+    condition_indices = np.arange(0, len(temperatures))
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
+        for condition_index, delay_time in zip(condition_indices, executor.map(
+            run_simulation,
+            [temperatures[j] for j in condition_indices],
+            [P7[0] for j in condition_indices],
+            [concentrations[0] for j in condition_indices]
+        )):
+            base_delays[condition_index] = delay_time
+
+    # save the result as a numpy thing
+    np.save(os.path.join(table_dir, result_name), base_delays)

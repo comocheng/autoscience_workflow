@@ -6,7 +6,7 @@ import cantera as ct
 import numpy as np
 import pandas as pd
 import concurrent.futures
-import subprocess
+import subprocesso
 
 
 # get the table index from input for easy parallelization

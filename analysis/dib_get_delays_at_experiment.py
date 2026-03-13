@@ -1,5 +1,4 @@
-# script to get the ignition delays at the experimental conditions for a given cantera input yaml
-# and save the results as a .npy in the same place
+# script to save a .npy with base delays for each of the tables across all 51 conditions
 
 import os
 import sys
@@ -9,23 +8,21 @@ import pandas as pd
 import concurrent.futures
 import subprocess
 
+sys.path.append(os.path.join(os.environ['AUTOSCIENCE_REPO'], 'analysis'))
+import ignition_delay
 
-# get the table index from input for easy parallelization
+
 cantera = sys.argv[1]
 if cantera.endswith('.inp'):
     cantera = cantera[:-4] + '.yaml'
 tokens = os.path.splitext(cantera)
 out_npy_file = tokens[0] + '.npy'
 
+base_gas = ct.Solution(cantera)
 
-experimental_table_index = 7
+experimental_table_index = 24
 
 working_dir = os.path.join(os.path.dirname(cantera))
-
-
-assert os.path.exists(cantera)
-
-base_gas = ct.Solution(cantera)
 
 
 # Take Reactor Conditions from Table 7 of supplementary info in
@@ -41,7 +38,7 @@ def run_simulation(T_orig, P_orig, X_orig):
         X = X_orig
 
         # gas is a global object
-        t_end = 10.0  # time in seconds
+        t_end = 1.0  # time in seconds
         base_gas.TPX = T, P, X
 
         reactor = ct.IdealGasReactor(base_gas)
@@ -80,93 +77,61 @@ def run_simulation(T_orig, P_orig, X_orig):
                 # return 0
 
         if not failed:
-            slopes = np.gradient(P, times)
-            delay_i = np.argmax(slopes)
-            return times[delay_i]
+            delay1, delay2, max_pressure_rise_time, max_pressure_rise_logtime, valid_ignition = ignition_delay.get_ignition_delays(times, P)
+            return (delay1, delay2, max_pressure_rise_time, max_pressure_rise_logtime, valid_ignition)
+
+            # slopes = np.gradient(P, times)
+            # delay_i = np.argmax(slopes)
+            # return times[delay_i]
         print(f'trying again {attempt_index}')
 
     print('Reactor failed to solve after many attempts!')
     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-    return 0
+    return (0, 0, 0, 0, False)
 
 
-# Load the experimental conditions
-ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'butane_ignition_delay.csv')
+ignition_delay_data = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'experiment', 'dib_ignition_delay.csv')
 df_exp = pd.read_csv(ignition_delay_data)
-table_exp = df_exp[df_exp['Table'] == experimental_table_index]
+
+# grab just the Metcalfe 2007 DIB phi=0.5 data P=4 atm (table 24)
+ref_table = df_exp[df_exp['Table'] == 24]
+
 # Define Initial conditions using experimental data
-tau_exp = table_exp['time (ms)'].values.astype(float)  # ignition delay
-T7 = table_exp['T_C'].values  # Temperatures
-P7 = table_exp['nominal pressure(atm)'].values * ct.one_atm  # pressures in Pa
-phi7 = table_exp['phi'].values  # equivalence ratios
+taus = ref_table['Time (ms)'].values.astype(float)  # ignition delay
+Ts = ref_table['T (K)'].values  # Temperatures
+Ps = ref_table['Pressure (bar)'].values * 1e5  # pressures in Pa
+phi = ref_table['Phi'].values[0]
+
 # list of starting conditions
-# Mixture compositions taken from table 2 of
-# https://doi-org.ezproxy.neu.edu/10.1016/j.combustflame.2010.01.016
 concentrations = []
-# for phi = 1
-
-if phi7[0] == 0.3:
-    x_diluent = 0.7821
-    conc_dict = {
-        'O2(2)': 0.2083,
-        'butane(1)': 0.00962
-    }
-elif phi7[0] == 0.5:
-    x_diluent = 0.7771
-    conc_dict = {
-        'O2(2)': 0.2070,
-        'butane(1)': 0.01595
-    }
-elif phi7[0] == 1.0:
-    x_diluent = 0.7649
-    conc_dict = {
-        'O2(2)': 0.2038,
-        'butane(1)': 0.03135
-    }
-elif phi7[0] == 2.0:
-    x_diluent = 0.7416
-    conc_dict = {
-        'O2(2)': 0.1976,
-        'butane(1)': 0.06079
-    }
-else:
-    raise ValueError
-
-if 'aramco' in cantera.lower():
-    o2_conc = conc_dict.pop('O2(2)')
-    conc_dict['O2'] = o2_conc
-
-    butane_conc = conc_dict.pop('butane(1)')
-    conc_dict['C4H10'] = butane_conc
-
-
-for i in range(0, len(table_exp)):
-    x_N2 = table_exp['%N2'].values[i] / 100.0 * x_diluent
-    x_Ar = table_exp['%Ar'].values[i] / 100.0 * x_diluent
-    x_CO2 = table_exp['%CO2'].values[i] / 100.0 * x_diluent
-    conc_dict['N2'] = x_N2
-    conc_dict['Ar'] = x_Ar
-    if 'aramco' in cantera.lower():
-        conc_dict['CO2'] = x_CO2
-    else:
-        conc_dict['CO2(7)'] = x_CO2
-    concentrations.append(conc_dict)
+conc_dict = {
+    'DIB1(1)': ref_table['DIB1'].values[0],
+    'DIB2(2)': ref_table['DIB2'].values[0],
+    'O2(3)': ref_table['O2'].values[0],
+    'Ar': ref_table['Ar'].values[0]
+}
+concentrations = [conc_dict for i in range(len(ref_table))]
 
 
 # compute and save the delays
-base_delays = np.zeros(len(T7))
+base_delays = np.zeros((len(Ts), 5))
 
 # Run all simulations in parallel
-condition_indices = np.arange(0, len(T7))
+condition_indices = np.arange(0, len(Ts))
 
 with concurrent.futures.ProcessPoolExecutor(max_workers=26) as executor:
     for condition_index, delay_time in zip(condition_indices, executor.map(
         run_simulation,
-        [T7[j] for j in condition_indices],
-        [P7[j] for j in condition_indices],
+        [Ts[j] for j in condition_indices],
+        [Ps[0] for j in condition_indices],
         [concentrations[0] for j in condition_indices]
     )):
-        base_delays[condition_index] = delay_time
+        base_delays[condition_index, 0] = delay_time[0]  # 2nd-stage delay
+        base_delays[condition_index, 1] = delay_time[1]  # 1st-stage delay
+        base_delays[condition_index, 2] = delay_time[2]  # time of maximum pressure rise
+        base_delays[condition_index, 3] = delay_time[3]  # time of maximum pressure rise using logtimes
+        base_delays[condition_index, 4] = delay_time[4]  # valid ignition?
+
 
 # save the result as a numpy thing
 np.save(out_npy_file, base_delays)
