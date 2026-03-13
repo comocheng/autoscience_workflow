@@ -2690,6 +2690,8 @@ def get_HFSP_bond_distances(reaction):
 
         species_dir = os.path.join(DFT_DIR, 'thermo', f'species_{species_index:04}')
         rotor_dir = os.path.join(species_dir, 'rotors')
+        # debugging 30866 issue
+        print(species_index, rotor_dir)
         gaussian_log_file = glob.glob(os.path.join(rotor_dir, 'conformer_*.log'))[0]
         with open(gaussian_log_file, 'r') as f:
             atoms = ase.io.gaussian.read_gaussian_out(f)

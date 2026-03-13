@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name={job_name}
-#SBATCH --partition=short
+#SBATCH --partition=short,west
 #SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --mem-per-cpu=7G

@@ -2,7 +2,7 @@
 #SBATCH --job-name={job_name}
 #SBATCH --error=error.log
 #SBATCH --nodes=1
-#SBATCH --partition=short
+#SBATCH --partition=short,west
 #SBATCH --mem=200Gb
 #SBATCH --time=48:00:00
 #SBATCH --ntasks=16

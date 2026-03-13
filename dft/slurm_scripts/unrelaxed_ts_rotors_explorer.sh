@@ -1,11 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name={job_name}
-#SBATCH --partition=short
-#SBATCH --time=24:00:00
-#SBATCH --cpus-per-task=16
+#SBATCH --partition=sharing,west,short
+#SBATCH --time=1:00:00
+#SBATCH --cpus-per-task=24
 #SBATCH --mem-per-cpu=7G
 #SBATCH --nodes=1
-#SBATCH --exclusive
 #SBATCH --array=0-21%5
 
 module load gaussian/g16
