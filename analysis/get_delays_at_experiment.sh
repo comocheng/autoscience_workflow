@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=base_delays
+#SBATCH --job-name=exp_delays
 #SBATCH --mem=20Gb
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=1

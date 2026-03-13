@@ -1,10 +1,13 @@
 """A module for running species and reaction sensitivity analyses for ignition delay simulations"""
 
 import os
+import logging
+import numpy as np
 import sys
 import cantera as ct
 import numpy as np
 import simulation
+import yaml
 
 
 def perturb_species(species, DELTA_J_MOL=418.4):
@@ -18,17 +21,10 @@ def perturb_species(species, DELTA_J_MOL=418.4):
     for i in range(len(input_data['thermo']['data'])):
         if not increase:
             # Only define the increase in enthalpy once or you'll end up with numerical gaps in continuity
-            # increase = DELTA * new_coeffs[5]
             increase = DELTA_J_MOL / R
         input_data['thermo']['data'][i][5] += increase
     new_species = ct.Species().from_dict(input_data)
     return new_species
-
-
-
-def perturb_reaction(reaction):
-    pass
-
 
 
 def run_species_sensitivity(gas, species_index, conditions_dict):
@@ -63,10 +59,7 @@ def run_reaction_sensitivity(gas, reaction_index, conditions_dict):
     Xs = conditions_dict['X']
 
     delays = np.zeros(len(Ts))
-
-    reaction_copy = ct.Reaction().from_dict(gas.reactions()[reaction_index].input_data)
-    perturbed_reaction = perturb_reaction(gas.reactions()[reaction_index])
-    gas.modify_reaction(reaction_index, perturbed_reaction)
+    gas.set_multiplier(1.1, reaction_index)
 
     # After much experience and heartbreak, I have concluded that Cantera runs fastest when you throw as many processors
     # at a single simulation without attempting to parallelize across multiple simulations.
@@ -77,20 +70,64 @@ def run_reaction_sensitivity(gas, reaction_index, conditions_dict):
         delays[i] = simulation.run_simulation(gas, T, P, X)
 
     # set the species back to the original so that we can run the next sensitivity simulation
-    gas.modify_reaction(reaction_index, reaction_copy)
+    gas.set_multiplier(1.0, reaction_index)
     return delays
 
 
 # This however we want to map to SLURM_ARRAY_TASK_ID because you can run on separate nodes
-def make_species_sensitivity_npys(mech_yaml, species_index, conditions_dict, save_path):
+def save_species_sensitivity_npy(mech_yaml, species_index, conditions_dict):
+    results_dir = os.path.join(os.path.dirname(mech_yaml), 'sensitivity')
+    os.makedirs(results_dir, exist_ok=True)
+
+    save_path = os.path.join(results_dir, f'spec_delay_{species_index:04}.npy')
     gas = ct.Solution(mech_yaml)
+    conditions_dict = {}  # TODO load from yaml file
     delays = run_species_sensitivity(gas, species_index, conditions_dict)
     np.save(save_path, delays)
 
 
-# option to do them all in serial?
-def make_all_species_sensitivity_npys(mech_yaml, conditions_dict, save_dir):
-    pass
+# This however we want to map to SLURM_ARRAY_TASK_ID because you can run on separate nodes
+def save_reaction_sensitivity_npy(mech_yaml, reaction_index, conditions_dict):
+    results_dir = os.path.join(os.path.dirname(mech_yaml), 'sensitivity')
+    os.makedirs(results_dir, exist_ok=True)
+
+    save_path = os.path.join(results_dir, f'reaction_delays_{reaction_index:06}.npy')
+    gas = ct.Solution(mech_yaml)
+    conditions_dict = {}  # TODO load from yaml file
+    delays = run_reaction_sensitivity(gas, reaction_index, conditions_dict)
+    np.save(save_path, delays)
+
+
+# option to do them all in serial
+def make_all_species_sensitivity_npys(mech_yaml, conditions_dict):
+    if isinstance(conditions_dict, str):
+        with open(conditions_dict) as f:
+            conditions_dict = yaml.safe_load(f)
+    results_dir = os.path.join(os.path.dirname(mech_yaml), 'sensitivity')
+    gas = ct.Solution(mech_yaml)
+    for species_index in range(gas.n_species):
+        outfile = os.path.join(results_dir, f'spec_delay_{species_index:04}.npy')
+        if os.path.exists(outfile):
+            logging.info(f'Skipping species {species_index} because file already exists!')
+            continue
+
+        delays = run_species_sensitivity(gas, species_index, conditions_dict)
+        np.save(outfile, delays)
+
+def make_all_reaction_sensitivity_npys(mech_yaml, conditions_dict):
+    if isinstance(conditions_dict, str):
+        with open(conditions_dict) as f:
+            conditions_dict = yaml.safe_load(f)
+    results_dir = os.path.join(os.path.dirname(mech_yaml), 'sensitivity')
+    gas = ct.Solution(mech_yaml)
+    for reaction_index in range(gas.n_reactions):
+        outfile = os.path.join(results_dir, f'reaction_delays_{reaction_index:06}.npy')
+        if os.path.exists(outfile):
+            logging.info(f'Skipping reaction {reaction_index} because file already exists!')
+            continue
+
+        delays = run_reaction_sensitivity(gas, reaction_index, conditions_dict)
+        np.save(outfile, delays)
 
 
 
