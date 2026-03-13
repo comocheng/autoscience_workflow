@@ -48,18 +48,19 @@ P7 = table7['nominal pressure(atm)'].values * ct.one_atm  # pressures in atm
 concentrations = []
 # for phi = 1
 x_diluent = 0.7649
-conc_dict = {
-    'O2(2)': 0.2038,
-    'butane(1)': 0.03135
-}
+
 
 for i in range(0, len(table7)):
+    conc_dict = {
+        'O2(2)': 0.2038,
+        'butane(1)': 0.03135
+    }
     x_N2 = table7['%N2'].values[i] / 100.0 * x_diluent
     x_Ar = table7['%Ar'].values[i] / 100.0 * x_diluent
     x_CO2 = table7['%CO2'].values[i] / 100.0 * x_diluent
     conc_dict['N2'] = float(x_N2)
     conc_dict['Ar'] = float(x_Ar)
-    conc_dict['CO2(7)'] = float(x_CO2)
+    # conc_dict['CO2(7)'] = float(x_CO2)
     concentrations.append(conc_dict)
 
 # -
@@ -78,21 +79,9 @@ M = 6  # sensitivity points
 sampled_temperature_range = np.linspace(Tmin, Tmax, M)
 
 conditions_dict = {
-    'experiment_points': {
-        'Ts': T7.tolist(),
-        'Ps': P7.tolist(),
-        'Xs': concentrations
-    },
-    'smooth_plot': {
-        'Ts': full_temperature_range.tolist(),
-        'Ps': [float(P7[0])] * N,
-        'Xs': [concentrations[0]] * N
-    },
-    'sensitivity_points': {
-        'Ts': sampled_temperature_range.tolist(),
-        'Ps': [float(P7[0])] * M,
-        'Xs': [concentrations[0]] * M
-    },
+    'experiment_points': [{'T': float(T7[i]), 'P': float(P7[i]), 'X': concentrations[i]} for i in range(len(T7))],
+    'smooth_plot': [{'T': float(full_temperature_range[i]), 'P': float(P7[0]), 'X': concentrations[0]} for i in range(N)],
+    'sensitivity_points': [{'T': float(sampled_temperature_range[i]), 'P': float(P7[0]), 'X': concentrations[0]} for i in range(M)]
 }
 
 experimental_yaml_file = 'butane1.yaml'
@@ -103,38 +92,37 @@ with open(experimental_yaml_file) as f:
     data = yaml.safe_load(f)
 
 
-data
+data['sensitivity_points']
 
 
 
 # # original config with too many sensitivity points
 
+# +
 # temperature range
 Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
 Tmin = 663
 N = 51
 full_temperature_range = np.linspace(Tmin, Tmax, N)
 
+M = N  # sensitivity points
+sampled_temperature_range = np.linspace(Tmin, Tmax, M)
+
+# -
+
 conditions_dict = {
-    'experiment_points': {
-        'Ts': T7.tolist(),
-        'Ps': P7.tolist(),
-        'Xs': concentrations
-    },
-    'smooth_plot': {
-        'Ts': full_temperature_range.tolist(),
-        'Ps': [float(P7[0])] * N,
-        'Xs': [concentrations[0]] * N
-    },
-    'sensitivity_points': {
-        'Ts': sampled_temperature_range.tolist(),
-        'Ps': [float(P7[0])] * N,
-        'Xs': [concentrations[0]] * N
-    },
+    'experiment_points': [{'T': float(T7[i]), 'P': float(P7[i]), 'X': concentrations[i]} for i in range(len(T7))],
+    'smooth_plot': [{'T': float(full_temperature_range[i]), 'P': float(P7[0]), 'X': concentrations[0]} for i in range(N)],
+    'sensitivity_points': [{'T': float(sampled_temperature_range[i]), 'P': float(P7[0]), 'X': concentrations[0]} for i in range(M)]
 }
 
 experimental_yaml_file = 'butane0.yaml'
 with open(experimental_yaml_file, 'w') as outfile:
     yaml.dump(conditions_dict, outfile, default_flow_style=False)
+
+with open(experimental_yaml_file) as f:
+    data = yaml.safe_load(f)
+
+data
 
 
