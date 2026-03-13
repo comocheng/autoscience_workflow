@@ -1,8 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=base_delays
 #SBATCH --mem=20Gb
-#SBATCH --time=18:00:00
-#SBATCH --cpus-per-task=26
-#SBATCH --array=7
+#SBATCH --time=01:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --ntasks=26
+#SBATCH --partition=short,west,sharing
 
-python $AUTOSCIENCE_REPO/analysis/get_base_delays.py $1 $SLURM_ARRAY_TASK_ID
+python $AUTOSCIENCE_REPO/analysis/get_base_delays.py $1
