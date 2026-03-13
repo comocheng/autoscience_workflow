@@ -7,15 +7,13 @@ import numpy as np
 import simulation
 
 
-def perturb_species(species):  # TODO maybe load this from a util Python module so code doesn't get repeated so much
-    # takes in an RMG species object
-    # change the enthalpy offset
-    DELTA_J_MOL = 418.4  # J/mol, but equals 0.1 kcal/mol
+def perturb_species(species, DELTA_J_MOL=418.4):
+    # takes in a Cantera species and makes a copy with the enthalpy offset changed
+    # Default of 418 J/mol equals 0.1 kcal/mol
     R = 8.3144598  # gas constant in J/mol
-    DELTA = 0.01
 
     # copy the species
-    input_data = species.input_data
+    input_data = species.input_data.copy()
     increase = None
     for i in range(len(input_data['thermo']['data'])):
         if not increase:
@@ -96,52 +94,52 @@ def make_all_species_sensitivity_npys(mech_yaml, conditions_dict, save_dir):
 
 
 
-if __name__ == '__main__':
-    species_index = int(sys.argv[1])
-    mech_yaml = sys.argv[2]
+# if __name__ == '__main__':
+#     species_index = int(sys.argv[1])
+#     mech_yaml = sys.argv[2]
     
 
 
-chemkin = sys.argv[1]
-species_index = int(sys.argv[2])
-aramco = 'aramco' in chemkin.lower()
+# chemkin = sys.argv[1]
+# species_index = int(sys.argv[2])
+# aramco = 'aramco' in chemkin.lower()
 
-working_dir = os.path.join(os.path.dirname(chemkin))
-experimental_table_index = 7  # workflow only requires calculating it here
-table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
-spec_delay_file = os.path.join(table_dir, f'spec_delay_{experimental_table_index:04}_{species_index:04}.npy')
-if os.path.exists(spec_delay_file):
-    print(f'Skipping {species_index} because file already exists!')
-    exit(0)
-os.makedirs(table_dir, exist_ok=True)
+# working_dir = os.path.join(os.path.dirname(chemkin))
+# experimental_table_index = 7  # workflow only requires calculating it here
+# table_dir = os.path.join(working_dir, f'table_{experimental_table_index:04}')
+# spec_delay_file = os.path.join(table_dir, f'spec_delay_{experimental_table_index:04}_{species_index:04}.npy')
+# if os.path.exists(spec_delay_file):
+#     print(f'Skipping {species_index} because file already exists!')
+#     exit(0)
+# os.makedirs(table_dir, exist_ok=True)
 
-base_yaml_path = os.path.join(working_dir, 'chem_annotated.yaml')
-gas = ct.Solution(base_yaml_path)
-if species_index >= len(gas.species()):
-    print(f'Skipping species {species_index} because not in model')
-    exit(-1)
+# base_yaml_path = os.path.join(working_dir, 'chem_annotated.yaml')
+# gas = ct.Solution(base_yaml_path)
+# if species_index >= len(gas.species()):
+#     print(f'Skipping species {species_index} because not in model')
+#     exit(-1)
 
-# perturb the species
-sp_copy = ct.Species().from_dict(gas.species()[species_index].input_data)
-perturbed_species = perturb_species(gas.species()[species_index])
-gas.modify_species(species_index, perturbed_species)
-
-
+# # perturb the species
+# sp_copy = ct.Species().from_dict(gas.species()[species_index].input_data)
+# perturbed_species = perturb_species(gas.species()[species_index])
+# gas.modify_species(species_index, perturbed_species)
 
 
-# just use the first concentration
-Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
-Tmin = 663
-# N = 51
-temperatures = np.linspace(Tmin, Tmax, N_Temps)
 
-# Run all simulations serially because Cantera has issues with multiprocessing-- it doesn't actually speed things up
-# https://groups.google.com/g/cantera-users/c/q_eUU6r0j_M/m/26F1IC-qAwAJ
-delays = np.zeros(len(temperatures))
-condition_indices = np.arange(0, len(temperatures))
 
-for condition_index in condition_indices:
-    print(condition_index)
-    delays[condition_index] = simulation.run_simulation(gas, temperatures[condition_index], P7[0], concentrations[0])
+# # just use the first concentration
+# Tmax = 1077  # use min and max temperature range of the data: 663K-1077K
+# Tmin = 663
+# # N = 51
+# temperatures = np.linspace(Tmin, Tmax, N_Temps)
 
-np.save(spec_delay_file, delays)
+# # Run all simulations serially because Cantera has issues with multiprocessing-- it doesn't actually speed things up
+# # https://groups.google.com/g/cantera-users/c/q_eUU6r0j_M/m/26F1IC-qAwAJ
+# delays = np.zeros(len(temperatures))
+# condition_indices = np.arange(0, len(temperatures))
+
+# for condition_index in condition_indices:
+#     print(condition_index)
+#     delays[condition_index] = simulation.run_simulation(gas, temperatures[condition_index], P7[0], concentrations[0])
+
+# np.save(spec_delay_file, delays)
