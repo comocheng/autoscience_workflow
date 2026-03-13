@@ -170,7 +170,8 @@ def add_species_to_database(species_list):
         adjacency_list = new_sp.to_adjacency_list().split('\n\n\n')[0]
 
         print(f'\t{name}')
-        species_df = species_df.append({'i': len(species_df), 'name': name, 'SMILES': smiles, 'adjacency_list': adjacency_list}, ignore_index=True)
+        species_df = pd.concat((species_df, pd.DataFrame({'i': [len(species_df)], 'name': name, 'SMILES': smiles, 'adjacency_list': adjacency_list})), ignore_index=True)
+        #species_df = species_df.append({'i': len(species_df), 'name': name, 'SMILES': smiles, 'adjacency_list': adjacency_list}, ignore_index=True)
 
     print('Saving new species database...')
     with open(species_csv, "w", newline="") as f:
@@ -225,7 +226,8 @@ def add_reaction_to_database(reaction_list):
 
         print(f'\t{name}')
         next_i = reaction_df['i'].values[-1] + 1
-        reaction_df = reaction_df.append({'i': next_i, 'name': name, 'SMILES': smiles, 'unique_string': unique_string}, ignore_index=True)
+        reaction_df = pd.concat((reaction_df, pd.DataFrame({'i': [next_i], 'name': name, 'SMILES': smiles, 'unique_string': unique_string})), ignore_index=True)
+        #reaction_df = reaction_df.append({'i': next_i, 'name': name, 'SMILES': smiles, 'unique_string': unique_string}, ignore_index=True)
 
     print('Saving new reaction database...')
     reaction_df.to_csv(reaction_csv, index=False)
@@ -260,6 +262,8 @@ def find_reverses(reaction_index_list):
 
 
 def get_reactants_and_products(reaction):
+    if type(reaction) == int:
+        reaction = index2reaction(reaction)
     reaction_string = get_unique_string(reaction)
     tokens = reaction_string.split('=')
     reactants = [index2species(int(i)) for i in tokens[0].split('+')]

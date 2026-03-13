@@ -22,8 +22,7 @@ elif chemkin.endswith('.yaml'):
 new_model_dir = os.path.dirname(chemkin)
 # assumes species dictionary etc have the following names:
 species_dict = os.path.join(new_model_dir, 'species_dictionary.txt')
-transport = os.path.join(new_model_dir, 'tran.dat')
-species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, transport_path=transport, use_chemkin_names=True)
+species_list, reaction_list = rmgpy.chemkin.load_chemkin_file(chemkin, dictionary_path=species_dict, use_chemkin_names=True)
 
 # Add species to database
 database_fun.add_species_to_database(species_list)
