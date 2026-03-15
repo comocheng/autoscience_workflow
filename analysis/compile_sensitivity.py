@@ -1,95 +1,62 @@
-# script to compile all of the csvs into a single array
-# modified from reaction_calculator/delay_uncertainty/compile_sensitivity.ipynb
+# script to compile all of the species and reaction sensitivity npts into a single npy
+# notebook to compile all of the csvs into a single array
 import os
-import sys
-import glob
-import pandas as pd
+import yaml
 import numpy as np
+
+import cantera as ct
 
 
 mech_file = sys.argv[1]
 
 if os.path.isdir(mech_file):
-    mech_dir = mech_file
+    working_dir = mech_file
+    mech_file = os.path.join('working_dir', 'chem_annotated.yaml')
 else:
-    mech_dir = os.path.dirname(mech_file)
+    working_dir = os.path.dirname(mech_file)
+    mech_file = mech_file.replace('.inp', '.yaml')
 
-main_table = 7
-if len(sys.argv) > 2:
-    main_table = int(sys.argv[2])
+# Check dimensions
+gas = ct.Solution(mech_yaml)
 
-# compile everything into a humongous array
-#             table1 table2 ... table12
-# species 1
-# species 2
-# .........
-# species N
-# reaction 1
-# reaction 2
-# .........
-# reaction M
+# check the size
+conditions_dict_path = os.path.join(working_dir, 'sim_config.yaml')
+if not os.path.exists(conditions_dict_path):
+    logging.warning(f'Expected to find sim_config.yaml at {conditions_dict_path} but it does not exist. Please copy it to the directory with your mech file.')
+    raise FileNotFoundError(f'sim_config.yaml not found at {conditions_dict_path}')
 
-main_table = 7
-# Compile the species sensitivities if that hasn't been done yet
-sp_delay_file = os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table:04}.npy')
-if not os.path.exists(sp_delay_file):
-    sp_files = glob.glob(os.path.join(mech_dir, f'table_{main_table:04}', f'spec_delay_{main_table:04}_*.npy'))
-    N = len(sp_files)
-    K = 51
-    spec_delays = np.zeros((N, K))
-    for i in range(N):
-        spec_delays[i, :] = np.load(os.path.join(mech_dir, f'table_{main_table:04}', f'spec_delay_{main_table:04}_{i:04}.npy'))
-    np.save(os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table:04}.npy'), spec_delays)
-else:
-    spec_delays = np.load(sp_delay_file)
+with open(conditions_dict_path) as f:
+    conditions_dict = yaml.safe_load(f)
 
-# load examples to get the right size
-test_sp_file = os.path.join(mech_dir, f'table_{main_table:04}', f'species_delays_{main_table:04}.npy')
-test_rxn_file = os.path.join(mech_dir, f'table_{main_table:04}', f'reaction_delays_{main_table:04}_0000.npy')
+base_delays = np.load(os.path.join(working_dir, 'sensitivity', 'base_delays.npy'))
+sample_spec_delays = np.load(os.path.join(working_dir, 'sensitivity', 'spec_delay_0000.npy'))
+sample_reaction_delays = np.load(os.path.join(working_dir, 'sensitivity', 'reaction_delay_000000.npy'))
 
-N_REACTIONS_PER_FILE = 10
 
-K = 51
-N = spec_delays.shape[0]
-M = np.load(test_rxn_file).shape[0]
-print(f'N={N}', 'species')
-print(f'M={M}', 'reactions')
+K = len(conditions_dict['sensitivity_points'])
+assert len(base_delays) == K
+assert len(sample_spec_delays) == K
+assert len(sample_reaction_delays) == K
 
-all_delays_ever = np.zeros((N + M, 12 * K))
 
-# for table_index in range(1, 13):
-for table_index in [7]:
-    table_dir = os.path.join(mech_dir, f'table_{table_index:04}')
 
-    rxn_files = glob.glob(os.path.join(table_dir, f'reaction_delays_{table_index:04}_*.npy'))
+# Build big table of sensitivity delays
+perturbed_delays = np.zeros((gas.n_species + gas.n_reactions, K))
 
-    all_delays_ever[0:N, (table_index - 1) * K: table_index * K] = spec_delays
+for i in range(gas.n_species):
+    spec_file = os.path.join(working_dir, 'sensitivity', f'spec_delay_{i:04}.npy')
+    if not os.path.exists(spec_file):
+        print(f'missing species {i:04}')
+        continue
+    perturbed_delays[i, :] = np.load(spec_file)
 
-    # fill in the reaction files
-    rxn_table = np.zeros((M, K))
-    for i in range(0, int(3500 / N_REACTIONS_PER_FILE)):
-        rxn_delay_file = os.path.join(table_dir, f'reaction_delays_{table_index:04}_{i * N_REACTIONS_PER_FILE:04}.npy')
-        if not os.path.exists(rxn_delay_file):
-            print('missing: ', i, rxn_delay_file)
-            continue  # TODO use assert and do not continue
-        rxn_table += np.load(rxn_delay_file)
-    all_delays_ever[N:, (table_index - 1) * K: table_index * K] = rxn_table
+for i in range(gas.n_reactions):
+    rxn_file = os.path.join(working_dir, 'sensitivity', f'reaction_delay_{i:06}.npy')
+    if not os.path.exists(rxn_file):
+        print(f'missing reaction {i:06}')
+        continue
+    perturbed_delays[gas.n_species + i, :] = np.load(rxn_file)
+
 
 # save the resulting delay array
-np.save(os.path.join(mech_dir, 'total_perturbed_mech_delays.npy'), all_delays_ever)
-
-
-# Also compile the base delays into a giant 1 x (12 * K) array
-total_base_delays = np.zeros(12 * K)
-for table_index in range(1, 13):
-    table_dir = os.path.join(mech_dir, f'table_{table_index:04}')
-    base_delay_file = os.path.join(table_dir, f'base_delays_{table_index:04}.npy')
-
-    if not os.path.exists(base_delay_file):
-        print(f'Missing base delay file {base_delay_file}')
-        continue
-        raise OSError(f'Missing base delay file {base_delay_file}')
-
-    total_base_delays[(table_index - 1) * K:table_index * K] = np.load(base_delay_file)
-
-np.save(os.path.join(mech_dir, 'total_base_delays.npy'), total_base_delays)
+np.save(os.path.join(working_dir, 'total_perturbed_mech_delays.npy'), perturbed_delays)
