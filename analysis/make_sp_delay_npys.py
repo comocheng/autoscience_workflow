@@ -40,6 +40,9 @@ with open(conditions_dict_path) as f:
     conditions_dict = yaml.safe_load(f)
 
 gas = ct.Solution(mech_yaml)
+if species_index > gas.n_species:
+    logging.warning(f'Species index greater than model size: {gas.n_species} species')
+    exit(-1)
 
 # modify the gas object to do sensitivity - does not get reset because it's one species at a time
 perturbed_species = simulation.perturb_species(gas.species()[species_index])

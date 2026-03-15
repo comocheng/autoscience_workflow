@@ -40,6 +40,9 @@ with open(conditions_dict_path) as f:
     conditions_dict = yaml.safe_load(f)
 
 gas = ct.Solution(mech_yaml)
+if reaction_index > gas.n_reactions:
+    logging.warning(f'Reaction index greater than model size: {gas.n_reactions} reactions')
+    exit(-1)
 gas.set_multiplier(1.1, reaction_index)
 
 condition_list = conditions_dict['sensitivity_points']
