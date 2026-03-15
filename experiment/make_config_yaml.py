@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.17.2
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -124,5 +124,58 @@ with open(experimental_yaml_file) as f:
     data = yaml.safe_load(f)
 
 data
+
+# # Propane experiments
+
+# +
+# Load the experimental conditions
+
+# list of starting conditions
+# Mixture compositions taken from table 1, mix-7
+# https://www-sciencedirect-com.ezproxy.neu.edu/science/article/pii/S001021802030242X#sec0018
+concentrations = []
+# for phi = 1
+
+conc_dict = {
+    'O2(2)': 0.1,
+    'propane(1)': 0.02,
+    'N2': 0.6,
+    'Ar': 0.28
+}
+
+# conc_dict = {
+#     'O2': 0.1,
+#     'C3H8': 0.02,
+#     'N2': 0.6,
+#     'Ar': 0.28
+# }
+
+
+P = 10.0 * ct.one_atm
+Ts = np.array([1256, 1296, 1312, 1346])
+taus = np.array([1901, 1281, 1038, 749]) * 1e-6
+# -
+
+# temperature range
+Tmax = 1500  # use min and max temperature range of the data: 663K-1077K
+Tmin = 1000
+N = 51
+full_temperature_range = np.linspace(Tmin, Tmax, N)
+
+
+conditions_dict = {
+    'experiment_points': [{'T': float(Ts[i]), 'P': float(P), 'X': conc_dict} for i in range(len(Ts))],
+    'smooth_plot': [{'T': float(full_temperature_range[i]), 'P': float(P), 'X': conc_dict} for i in range(N)],
+    'sensitivity_points': [{'T': float(Ts[i]), 'P': float(P), 'X': conc_dict} for i in range(len(Ts))]
+}
+
+experimental_yaml_file = 'propane0.yaml'
+with open(experimental_yaml_file, 'w') as outfile:
+    yaml.dump(conditions_dict, outfile, default_flow_style=False)
+
+with open(experimental_yaml_file) as f:
+    data = yaml.safe_load(f)
+
+
 
 
