@@ -1,5 +1,6 @@
 #!/bin/bash
-#SBATCH --time=24:00:00
+#SBATCH --time=01:00:00
+#SBATCH --partition=short,sharing,west
 
 export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
 mkdir -p $GAUSS_SCRDIR

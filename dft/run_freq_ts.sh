@@ -1,5 +1,6 @@
 #!/bin/bash
-#SBATCH --time=24:00:00
+#SBATCH --time=01:00:00
+#SBATCH --partition=west,short,sharing
 #SBATCH --job-name=freq_ts
 
 export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
