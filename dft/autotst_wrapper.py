@@ -506,18 +506,21 @@ def screen_species_conformers(species_index, force_rerun=False):
     # ------------------ Use Gaussian to do a more detailed calculation ------------------
     species_log(species_index, "Generating gaussian input files")
     save_offset = 0
+    SP_SCR_DIR = os.path.join(os.environ['GAUSS_SCRDIR'], f'species_{species_index:04}')
+    os.makedirs(SP_SCR_DIR, exist_ok=True)
     for resonance_smiles in spec.conformers.keys():
         for i, cf in enumerate(spec.conformers[resonance_smiles]):
             conformer_index = i + save_offset
             gaussian = autotst.calculator.gaussian.Gaussian(conformer=cf)
-            calc = gaussian.get_conformer_calc()
+
+            additional_keywords = {'chk': os.path.join(SP_SCR_DIR, f'conformer_{conformer_index:04}.chk')}
+            calc = gaussian.get_conformer_calc(additional_keywords)
             calc.label = f'conformer_{conformer_index:04}'
             calc.directory = conformer_dir
             if 'scratch' in calc.parameters:
                 calc.parameters.pop('scratch')
             calc.parameters.pop('multiplicity')
             calc.parameters['mult'] = cf.rmg_molecule.multiplicity
-            calc.chk = f'conformer_{conformer_index:04}.chk'
             calc.write_input(cf.ase_molecule)
         save_offset += len(spec.conformers[resonance_smiles])
 
@@ -527,7 +530,7 @@ def screen_species_conformers(species_index, force_rerun=False):
 
 
 def optimize_conformers(species_index, force_rerun=False):
-    """Optimize the conformers that were screened"""
+    """Optimize the species conformers that were screened"""
     if arkane_species_complete(species_index):
         return True
 
@@ -2140,12 +2143,18 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
             reaction.ts[direction][i].update_coords_from(mol_type="ase")
 
         gaussian = autotst.calculator.gaussian.Gaussian(conformer=ts)
+
+
+        TS_SCR_DIR = os.path.join(os.environ['GAUSS_SCRDIR'], f'reaction_{reaction_index:06}')
+        os.makedirs(TS_SCR_DIR, exist_ok=True)
+        additional_keywords = {'chk': os.path.join(TS_SCR_DIR, f'{opt_type}_{opt_label}.chk')}
+
         if opt_type in ['shell', 'hfsp_shell']:
-            calc = gaussian.get_shell_calc()
+            calc = gaussian.get_shell_calc(additional_keywords)
         elif opt_type == 'center':
-            calc = gaussian.get_center_calc()
+            calc = gaussian.get_center_calc(additional_keywords)
         elif opt_type in ['overall', 'hfsp', 'hfsp_overall']:
-            calc = gaussian.get_overall_calc()
+            calc = gaussian.get_overall_calc(additional_keywords)
         else:
             raise ValueError(f'opt_type must be one of shell, center, overall, hfsp, hfsp_shell, hfsp_overall. Got {opt_type}')
         calc.label = opt_label[:-4]

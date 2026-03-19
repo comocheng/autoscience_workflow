@@ -2,10 +2,11 @@
 #SBATCH --job-name={job_name}
 #SBATCH --error=error.log
 #SBATCH --nodes=1
-#SBATCH --partition=short,west
+#SBATCH --partition=sharing,short,west
 #SBATCH --mem=20Gb
-#SBATCH --time=24:00:00
+#SBATCH --time=01:00:00
 #SBATCH --ntasks=24
+#SBATCH --cpus-per-task=1
 
 export GAUSS_SCRDIR=/scratch/harris.se/guassian_scratch
 mkdir -p $GAUSS_SCRDIR

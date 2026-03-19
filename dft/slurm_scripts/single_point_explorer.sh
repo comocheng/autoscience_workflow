@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=short,west
 #SBATCH --mem=200Gb
-#SBATCH --time=48:00:00
+#SBATCH --time=8:00:00
 #SBATCH --ntasks=16
 
 
