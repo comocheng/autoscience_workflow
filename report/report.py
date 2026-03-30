@@ -92,6 +92,16 @@ def plot_proj_rotors(original_freqs, new_freqs, title=None):
     plt.show()
 
 
+def get_prev_run_folders(chemkin_file):
+    fuel_name = os.path.basename(os.path.dirname(chemkin_file)).split('_')[0]
+    run_dirs = sorted(glob.glob(os.path.join(os.path.dirname(os.path.dirname(chemkin_file)), f'{fuel_name}_*')))
+    prev_run_dirs = []
+    for i in range(len(run_dirs)):
+        if run_dirs[i] > os.path.dirname(chemkin_file):
+            continue
+        prev_run_dirs.append(run_dirs[i])
+    return prev_run_dirs
+
 
 def get_changelists(chemkin_file):
     # relies on the fuel_YYYYMMDD structure
