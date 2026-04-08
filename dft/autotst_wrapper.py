@@ -1178,7 +1178,7 @@ def run_rotors(species_index, increment_deg=20):
     os.chdir(start_dir)
 
 
-def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsource_dir=None, relaxed=True):
+def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsource_dir=None, calc_type='relaxed'):
     """Set up rotor scans for a TS complex
     If outsource_dir is a path (like somewhere on scratch), save the results there
     """
@@ -1191,7 +1191,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
     os.makedirs(rotor_dir, exist_ok=True)
     start_dir = os.getcwd()
 
-    if relaxed:
+    if calc_type == 'relaxed':
         # check if the rotors were already set up
         rotor_logfiles = glob.glob(os.path.join(rotor_dir, f'{rotor_str}_*.com'))
         if force_rerun:
@@ -1201,7 +1201,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
                 print(reaction_index, 'TS rotors already set up')
                 raise ValueError
         print(reaction_index, f'Starting TS rotor setup')
-    else:
+    elif calc_type in ['rigid', 'piecewise_relaxed']:
         rotor_calculations_path = rotor_dir
         # outsource_root = '/work/westgroup/SCRATCH/sevy_calcs'
         # outsource_root = '/scratch/harris.se/guassian_scratch/rotor_calcs'
@@ -1217,6 +1217,8 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
             reaction_log(reaction_index, 'TS rotors already set up')
             return True
         reaction_log(reaction_index, f'Starting TS rotor setup')
+    else:
+        raise ValueError('unrecognized type of rotor calc')
 
     # Build the reaction TS complex
     reaction_log(reaction_index, f'Building TS complex')
@@ -1242,7 +1244,7 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
         print(reaction_index, "no rotors to calculate")
         raise ValueError
 
-    if relaxed:
+    if calc_type == 'relaxed':
         reaction_log(reaction_index, "Generating relaxed gaussian input files")
         # figure out which atoms compose the reaction core
         for i, torsion in enumerate(reaction.ts[direction][0].torsions):
@@ -1260,8 +1262,8 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
         )
         with open(runfile, 'w') as f:
             f.write(base_script_text)
-    else:
-        reaction_log(reaction_index, "Generating piecewise gaussian input files")
+    elif calc_type in ['rigid', 'piecewise_relaxed']:
+        reaction_log(reaction_index, f"Generating {calc_type} gaussian input files")
 
         new_cf = reaction.ts[direction][0]
         for rotor_index in range(n_rotors):
@@ -1307,8 +1309,9 @@ def setup_ts_rotors(reaction_index, increment_deg=30, force_rerun=False, outsour
                     label=f'rotor_{rotor_index:04}_{angle_index:04}',
                     method='m062x',
                     basis='cc-pVTZ',
-                    scf='maxcycle=1000',
+                    scf='tight,direct,maxcycle=1000',
                     mult=new_cf.rmg_molecule.multiplicity,
+                    # extra='Opt=(ts,CalcFC,ModRedun,noeig,maxcycles=900) integral=(grid=ultrafine, Acc2E=12) iop(2/9=2000)',
                     # multiplicity=new_cf.rmg_molecule.multiplicity,
                 )
 
@@ -1694,8 +1697,7 @@ def bonds_too_large(conformer_file, index, calc_type='species', atoms=None, verb
     return too_large
 
 
-def get_rotor_info(conformer, torsion, torsion_index, relaxed=True):
-    # relaxed = True for relaxed rotor scans vs. fixed rotor scans with no optimization
+def get_rotor_info(conformer, torsion, torsion_index, use_scan_log=False):
     _, j, k, _ = torsion.atom_indices
 
     # Adjusted since mol's IDs start from 0 while Arkane's start from 1
@@ -1709,7 +1711,7 @@ def get_rotor_info(conformer, torsion, torsion_index, relaxed=True):
     # Adjusted to start from 1 instead of 0
     top_IDs_adj = [ID + 1 for ID in top_IDs]
 
-    if relaxed:
+    if not use_scan_log:
         tor_log = f'rotor_{torsion_index:04}.log'
         info = f"     HinderedRotor(scanLog=Log('{tor_log}'), pivots={tor_center_adj}, top={top_IDs_adj}, fit='fourier'),"
     else:
@@ -1718,8 +1720,7 @@ def get_rotor_info(conformer, torsion, torsion_index, relaxed=True):
     return info
 
 
-def get_pivots_tops(conformer, torsion, torsion_index, relaxed=True):
-    # relaxed = True for relaxed rotor scans vs. fixed rotor scans with no optimization
+def get_pivots_tops(conformer, torsion, torsion_index):
     _, j, k, _ = torsion.atom_indices
 
     # Adjusted since mol's IDs start from 0 while Arkane's start from 1
@@ -1794,22 +1795,22 @@ def write_arkane_conformer_file(conformer, gauss_log, arkane_dir, include_rotors
             conformer.get_geometries()
         for i, torsion in enumerate(conformer.torsions):
             # figure out whether the rotor file worked...
-            relaxed = True
+            use_scan_log = False
             rotor_logfile = os.path.join(arkane_dir, f'rotor_{i:04}.log')
             rotor_scan_energies_file = os.path.join(arkane_dir, f'rotor_{i:04}_scan_energies.txt')
             if os.path.exists(rotor_scan_energies_file):
                 if not os.path.exists(rotor_logfile):
-                    relaxed = False
+                    use_scan_log = True
                 else:
                     # try reading in the logfile
                     try:
                         gl = arkane.ess.gaussian.GaussianLog(rotor_logfile)
                         if has_rotor_errors(rotor_logfile):
-                            relaxed = False
+                            use_scan_log = True
                     except arkane.exceptions.LogError:
-                        relaxed = False
+                        use_scan_log = True
 
-            output += [get_rotor_info(conformer, torsion, i, relaxed=relaxed)]
+            output += [get_rotor_info(conformer, torsion, i, use_scan_log=use_scan_log)]
         output += ["]"]
 
     input_string = ""
@@ -2147,7 +2148,7 @@ def setup_opt(reaction_index, opt_type, direction='forward', max_combos=1000, ma
 
         TS_SCR_DIR = os.path.join(os.environ['GAUSS_SCRDIR'], f'reaction_{reaction_index:06}')
         os.makedirs(TS_SCR_DIR, exist_ok=True)
-        additional_keywords = {'chk': os.path.join(TS_SCR_DIR, f'{opt_type}_{opt_label}.chk')}
+        additional_keywords = {'chk': os.path.join(TS_SCR_DIR, f'{opt_type}_{opt_label[:-4]}.chk')}
 
         if opt_type in ['shell', 'hfsp_shell']:
             calc = gaussian.get_shell_calc(additional_keywords)
@@ -2389,7 +2390,7 @@ def get_lowest_valid_ts(overall_dir, fake_valid_ts=False, reaction_index=None):
     return TS_log
 
 
-def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False, overall_dirname='overall', force_rerun=False):
+def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=False, overall_dirname='overall', force_rerun=True):
     """Function to setup the arkane job for a reaction
     overall_dirname is where to get the TS logs from, alternatives are 'hfsp' and 'hfsp_overall'
     """
@@ -2409,6 +2410,7 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     arkane_ts_dir = os.path.join(arkane_dir, 'ts')
     os.makedirs(arkane_dir, exist_ok=True)
     os.makedirs(arkane_ts_dir, exist_ok=True)
+    os.makedirs(rotor_dir, exist_ok=True)
 
     species_dict_file = os.path.join(os.environ['AUTOSCIENCE_REPO'], 'RMG_example_fuel_YYYYMMDD', 'species_dictionary.txt')
     species_dict = rmgpy.chemkin.load_species_dictionary(species_dict_file)
@@ -2537,44 +2539,49 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
     ]
 
     # add the rotors...
-    # conformer = reaction.ts[direction][0]
     torsions = reaction.ts[direction][0].get_torsions()
-    # torsions = conformer.get_torsions()
-    # n_rotors = len(reaction.ts[direction][0].torsions)
     n_rotors = len(torsions)
     reaction_log(reaction_index, f'{n_rotors} rotors to include')
     if n_rotors > 0:
         reaction_log(reaction_index, 'writing hindered rotors')
         ts_lines.append("rotors = [\n")
-        # if len(conformer.torsions) == 0:
-        #     reaction_log(reaction_index, 'Have to call get_molecules() because no rotors (this is bad)')
-        #     conformer.get_molecules()
-        #     conformer.get_geometries()
-        # for i, torsion in enumerate(conformer.torsions):
         for i, torsion in enumerate(torsions):
-            relaxed = True
+            found_valid_rotor_log = False
+            use_scan_log = False
             rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}.log')
             try:
                 gl = arkane.ess.ess_factory(rotor_file)
-            except (FileNotFoundError, arkane.exceptions.LogError):
-                relaxed = False
+                found_valid_rotor_log = True
+            except (FileNotFoundError, arkane.exceptions.LogError, rmgpy.exceptions.InputError):
                 reaction_log(reaction_index, f'cannot file rotor file {rotor_file}. Will try assembling rotor scan energy log')
-                example_rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
+                use_scan_log = True
                 rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')  # final energy scan file in rotors dir
 
-                outsource_dir = os.path.join('/scratch/harris.se/guassian_scratch/rotor_calcs/', f'reaction_{reaction_index:06}', f'rotor_{i:04}')
-                outsource_log_file = os.path.join(outsource_dir, f'rotor_{i:04}_0000.log')
-                if os.path.exists(example_rotor_log_file):
-                    assemble_rotor_scan_energies(rotor_dir, i)
-                elif os.path.exists(rotor_file):
-                    reaction_log(reaction_index, f'Using existing rotor scan file {rotor_file}')
-                elif os.path.exists(outsource_log_file):
-                    reaction_log(reaction_index, f'Assembling rotor scan from {outsource_dir}')
-                    assemble_rotor_scan_energies(outsource_dir, i)
+            outsource_dirs = [  # possible locations of rotor calcs
+                rotor_dir,
+                os.path.join('/scratch/harris.se/guassian_scratch/relaxed_rotor_scans/', f'reaction_{reaction_index:06}', f'rotor_{i:04}'),
+                os.path.join('/scratch/harris.se/guassian_scratch/rotor_calcs/', f'reaction_{reaction_index:06}', f'rotor_{i:04}'),
+            ]
+            for outsource_dir in outsource_dirs:
+                if found_valid_rotor_log:
+                    break
+
+                # first check for scan_energies.txt file
+                scan_energy_file = os.path.join(outsource_dir, f'rotor_{i:04}_scan_energies.txt')  # final energy scan file in rotors dir
+                if os.path.exists(scan_energy_file):
                     scan_energy_file = os.path.join(outsource_dir, os.path.basename(rotor_file))
                     shutil.copyfile(scan_energy_file, rotor_file)
+                    found_valid_rotor_log = True
                 else:
-                    raise OSError(f'No rotor file for reaction {reaction_index} rotor {i}')
+                    reaction_log(reaction_index, f'Assembling rotor scan from {outsource_dir}')
+                    try:
+                        assemble_rotor_scan_energies(outsource_dir, i)
+                        scan_energy_file = os.path.join(outsource_dir, os.path.basename(rotor_file))
+                        shutil.copyfile(scan_energy_file, rotor_file)
+                        found_valid_rotor_log = True
+                    except:
+                        reaction_log(reaction_index, f'Rotor assembly from {outsource_dir} failed')
+
 
             if force_rerun:
                 if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt')):
@@ -2583,32 +2590,8 @@ def setup_arkane_reaction(reaction_index, direction='forward', force_valid_ts=Fa
                     os.remove(os.path.join(arkane_ts_dir, f'rotor_{i:04}.log'))
             shutil.copy(rotor_file, arkane_ts_dir)
 
-            # ts_lines.append(get_rotor_info(conformer, torsion, i, relaxed=False) + '\n')
-            ts_lines.append(get_rotor_info(reaction.ts[direction][0], torsion, i, relaxed=relaxed) + '\n')
-            # rotor_file = os.path.join(rotor_dir, f'rotor_{i:04}_scan_energies.txt')
-            # if not os.path.exists(rotor_file):
-            #     reaction_log(reaction_index, f'cannot file rotor file {rotor_file}')
-            #     rotor_log_file = os.path.join(rotor_dir, f'rotor_{i:04}_0000.log')
-
-            #     outsource_dir = os.path.join('/scratch/harris.se/guassian_scratch/rotor_calcs/', f'reaction_{reaction_index:06}', f'rotor_{i:04}')
-            #     outsource_log_file = os.path.join(outsource_dir, f'rotor_{i:04}_0000.log')
-            #     if os.path.exists(rotor_log_file):
-            #         assemble_rotor_scan_energies(rotor_dir, i)
-            #     elif os.path.exists(outsource_log_file):
-            #         reaction_log(reaction_index, f'Assembling rotor scan from {outsource_dir}')
-            #         assemble_rotor_scan_energies(outsource_dir, i)
-            #         scan_energy_file = os.path.join(outsource_dir, f'rotor_{i:04}_scan_energies.txt')
-            #         shutil.copyfile(scan_energy_file, rotor_file)
-            #     else:
-            #         raise OSError(f'No rotor file for reaction {reaction_index} rotor {i}')
-
-
-            # if force_rerun:
-            #     if os.path.exists(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt')):
-            #         os.remove(os.path.join(arkane_ts_dir, f'rotor_{i:04}_scan_energies.txt'))
-            # shutil.copy(rotor_file, arkane_ts_dir)
-            # # ts_lines.append(get_rotor_info(conformer, torsion, i, relaxed=False) + '\n')
-            # ts_lines.append(get_rotor_info(reaction.ts[direction][0], torsion, i, relaxed=False) + '\n')
+            ts_lines.append(get_rotor_info(reaction.ts[direction][0], torsion, i, use_scan_log=use_scan_log) + '\n')
+            
         ts_lines.append("]\n")
 
     with open(TS_arkane_path, 'w') as g:
